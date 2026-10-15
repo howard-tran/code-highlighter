@@ -94,7 +94,7 @@ export class Highlight {
 
             // 只高亮当初选中的那一处
             if (this.config.IsOnlySelectedOccurrence()) {
-                const range = this.ResolveRange(editor.document, selectedWord, this.selectedRanges[idx]);
+                const range = this.ResolveRange(editor.document, selectedWord, this.selectedRanges[idx], text.length);
                 if (range) {
                     decorations[idx % decorations.length].push({ range: range });
                 }
@@ -152,7 +152,7 @@ export class Highlight {
 
             // 只高亮当初选中的那一处
             if (this.config.IsOnlySelectedOccurrence()) {
-                const range = this.ResolveRange(editor.document, selectedWord, this.selectedRanges[idx]);
+                const range = this.ResolveRange(editor.document, selectedWord, this.selectedRanges[idx], text.length);
                 if (range) {
                     decorations[idx % decorations.length].push({ range: range });
                 }
@@ -198,13 +198,13 @@ export class Highlight {
      * 找回当初选中的范围（文本被编辑后位置可能已经变化）。
      * 返回 undefined 表示该处已不再是这个单词，跳过高亮。
      */
-    private ResolveRange(document: vscode.TextDocument, escapedWord: string, range?: vscode.Range): vscode.Range | undefined {
+    private ResolveRange(document: vscode.TextDocument, escapedWord: string, range: vscode.Range | undefined, textLength: number): vscode.Range | undefined {
         if (!range) {
             return undefined;
         }
         // GetSelectedWord 对正则特殊字符做了转义，这里还原成原始文本
         const rawWord = escapedWord.replace(/\\(.)/g, '$1');
-        const safeRange = this.ClampRange(document, range);
+        const safeRange = this.ClampRange(document, range, textLength);
 
         if (document.getText(safeRange) === rawWord) {
             return safeRange;
@@ -217,10 +217,10 @@ export class Highlight {
         return undefined;
     }
 
-    private ClampRange(document: vscode.TextDocument, range: vscode.Range): vscode.Range {
-        const length = document.getText().length;
-        const start = Math.max(0, Math.min(document.offsetAt(range.start), length));
-        const end = Math.max(start, Math.min(document.offsetAt(range.end), length));
+    // textLength 由调用方传入（调用方已有 text），避免每次调用都 getText() 拷贝整个文档
+    private ClampRange(document: vscode.TextDocument, range: vscode.Range, textLength: number): vscode.Range {
+        const start = Math.max(0, Math.min(document.offsetAt(range.start), textLength));
+        const end = Math.max(start, Math.min(document.offsetAt(range.end), textLength));
         return new vscode.Range(document.positionAt(start), document.positionAt(end));
     }
 
