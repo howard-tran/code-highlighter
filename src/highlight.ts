@@ -56,6 +56,7 @@ export class Highlight {
         }
 
         this.DecorateSelectedWords();
+        this.DecorateSelectedWords_02();
     }
 
     public RefeshSelectedWords(): void {
@@ -67,7 +68,8 @@ export class Highlight {
         }, 500);
     }
 
-    public DecorateSelectedWords(): void {
+    // For debugging
+    public DecorateSelectedWords_02(): void {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
             return;
@@ -80,7 +82,7 @@ export class Highlight {
         });
 
         const text = editor.document.getText();
-        const flags = this.config.IsIgnoreCase() ? 'gi' : 'g';
+        const flags = this.config.IsIgnoreCase() ? 'giu' : 'gu';
         // log.Info(`DecorateSelectedWords: file=${editor.document.uri.toString()} ` +
         //     `words=[${this.selectedWords.filter(w => w !== '').join(', ')}] ` +
         //     `wholeWord=${this.config.IsWholeWord()} ignoreCase=${this.config.IsIgnoreCase()} ` +
@@ -99,7 +101,68 @@ export class Highlight {
                 return;
             }
 
-            const pattern = this.config.IsWholeWord() ? '\\b' + selectedWord + '\\b' : selectedWord;
+            // \b 基于 ASCII 的 \w，非 ASCII 字母（如越南语 Đ）不算单词字符，\bĐảng\b 会匹配失败；改用 Unicode 感知的 lookaround
+            const pattern = this.config.IsWholeWord()
+                ? '(?<![\\p{L}\\p{N}_])' + selectedWord + '(?![\\p{L}\\p{N}_])'
+                : selectedWord;
+
+            let matchCount = 0;
+            const regEx = new RegExp(pattern, flags);
+            let execArray = regEx.exec(text);
+            while (execArray !== null) {
+                matchCount++;
+                const startPos = editor.document.positionAt(execArray.index);
+                const endPos = editor.document.positionAt(execArray.index + execArray[0].length);
+                const decorationPos = { range: new vscode.Range(startPos, endPos) };
+                decorations[idx % decorations.length].push(decorationPos);
+
+                execArray = regEx.exec(text);
+            }
+            log.Info(`  "${selectedWord}" -> pattern="${pattern}" flags=${flags}, ${matchCount} match(es)`);
+        });
+
+        this.decorators.forEach((decorator: vscode.TextEditorDecorationType, idx: number) => {
+            log.Info(`  decorator[${idx}]: ${decorations[idx].length} range(s)`);
+            editor.setDecorations(decorator, decorations[idx]);
+        });
+    }
+
+    public DecorateSelectedWords(): void {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            return;
+        }
+
+        let decorations: vscode.DecorationOptions[][] = [];
+        this.decorators.forEach(() => {
+            let decoration: vscode.DecorationOptions[] = [];
+            decorations.push(decoration);
+        });
+
+        const text = editor.document.getText();
+        const flags = this.config.IsIgnoreCase() ? 'giu' : 'gu';
+        // log.Info(`DecorateSelectedWords: file=${editor.document.uri.toString()} ` +
+        //     `words=[${this.selectedWords.filter(w => w !== '').join(', ')}] ` +
+        //     `wholeWord=${this.config.IsWholeWord()} ignoreCase=${this.config.IsIgnoreCase()} ` +
+        //     `onlyOccurrence=${this.config.IsOnlySelectedOccurrence()} decorators=${this.decorators.length}`);
+        this.selectedWords.forEach((selectedWord: string, idx: number) => {
+            if (selectedWord === '') {
+                return;
+            }
+
+            // 只高亮当初选中的那一处
+            if (this.config.IsOnlySelectedOccurrence()) {
+                const range = this.ResolveRange(editor.document, selectedWord, this.selectedRanges[idx]);
+                if (range) {
+                    decorations[idx % decorations.length].push({ range: range });
+                }
+                return;
+            }
+
+            // \b 基于 ASCII 的 \w，非 ASCII 字母（如越南语 Đ）不算单词字符，\bĐảng\b 会匹配失败；改用 Unicode 感知的 lookaround
+            const pattern = this.config.IsWholeWord()
+                ? '(?<![\\p{L}\\p{N}_])' + selectedWord + '(?![\\p{L}\\p{N}_])'
+                : selectedWord;
 
             let matchCount = 0;
             const regEx = new RegExp(pattern, flags);
@@ -124,6 +187,8 @@ export class Highlight {
 
     public UpdateConfig(): void {
         log.Info(`UpdateConfig: disposing ${this.decorators.length} decorator(s), reloading config`);
+        this.selectedWords = [];
+        this.selectedRanges = [];
         this.decorators.forEach(decorator => decorator.dispose());
         this.config = new Config();
         this.decorators = this.config.GetDecorationTypes();
