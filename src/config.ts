@@ -1,5 +1,6 @@
 
 import * as vscode from 'vscode';
+import {log} from './logger';
 
 interface Color {
     light: string;
@@ -21,9 +22,13 @@ export class Config {
         const borderRadiusConfig = config.get<string>('highlight.configuration.borderRadius');
         this.borderRadius = borderRadiusConfig === undefined ? '5px' : borderRadiusConfig;
 
+        const onlyOccurrenceConfig = config.get<boolean>('highlight.configuration.onlySelectedOccurrence');
+        this.onlySelectedOccurrence = onlyOccurrenceConfig === undefined ? false : onlyOccurrenceConfig;
+
         // 获取所有颜色
         this.decorationTypes = [];
         const colors = config.get<Color[]>('highlight.configuration.colors');
+
         if (colors) {
             colors.forEach((color: Color) => {
                 let decorationType = vscode.window.createTextEditorDecorationType({
@@ -45,6 +50,10 @@ export class Config {
                 this.decorationTypes.push(decorationType);
             });
         }
+
+        log.Info(`Config loaded: wholeWord=${this.wholeWord} ignoreCase=${this.ignoreCase} ` +
+            `bold=${this.isBold} borderRadius=${this.borderRadius} ` +
+            `onlySelectedOccurrence=${this.onlySelectedOccurrence} colors=${this.decorationTypes.length}`);
     }
 
     public IsIgnoreCase(): boolean {
@@ -55,13 +64,20 @@ export class Config {
         return this.wholeWord;
     }
 
+    public IsOnlySelectedOccurrence(): boolean {
+        return this.onlySelectedOccurrence;
+    }
+
     public GetDecorationTypes(): vscode.TextEditorDecorationType[] {
-        return this.decorationTypes;
+        if (!this.onlySelectedOccurrence)
+            return this.decorationTypes;
+        else return [this.decorationTypes[3]];
     }
 
     private wholeWord: boolean;
     private ignoreCase: boolean;
     private isBold: boolean;
     private borderRadius: string;
+    private onlySelectedOccurrence: boolean;
     private decorationTypes: vscode.TextEditorDecorationType[];
 }

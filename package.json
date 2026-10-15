@@ -28,6 +28,10 @@
 			{
 				"command": "highlight.clearWords",
 				"title": "%command.clearHighlightWords.title%"
+			},
+			{
+				"command": "highlight.showLog",
+				"title": "%command.showLog.title%"
 			}
 		],
 		"keybindings": [
@@ -64,6 +68,16 @@
 						"default": "5px",
 						"description": "%config.borderRadius.description%"
 					},
+					"highlight.configuration.onlySelectedOccurrence": {
+						"type": "boolean",
+						"default": false,
+						"description": "%config.onlySelectedOccurrence.description%"
+					},
+					"highlight.configuration.debug": {
+						"type": "boolean",
+						"default": true,
+						"description": "%config.debug.description%"
+					},
 					"highlight.configuration.colors": {
 						"type": "array",
 						"default": [
@@ -98,6 +112,102 @@
 							{
 								"light": "#d1e0e0",
 								"dark": "#F4D03F"
+							},
+							{
+								"light": "#ffd1dc",
+								"dark": "#A93226"
+							},
+							{
+								"light": "#cfe8ff",
+								"dark": "#2E86C1"
+							},
+							{
+								"light": "#cfffdf",
+								"dark": "#17A589"
+							},
+							{
+								"light": "#fff0c2",
+								"dark": "#D68910"
+							},
+							{
+								"light": "#e3d1ff",
+								"dark": "#7D3C98"
+							},
+							{
+								"light": "#ffe0c2",
+								"dark": "#CA6F1E"
+							},
+							{
+								"light": "#c2f7ff",
+								"dark": "#0E8A76"
+							},
+							{
+								"light": "#f5cfff",
+								"dark": "#884EA0"
+							},
+							{
+								"light": "#d1ffe0",
+								"dark": "#229954"
+							},
+							{
+								"light": "#fffbc2",
+								"dark": "#B7950B"
+							},
+							{
+								"light": "#ffd6d6",
+								"dark": "#CB4335"
+							},
+							{
+								"light": "#d1f0ff",
+								"dark": "#2471A3"
+							},
+							{
+								"light": "#e0ffe6",
+								"dark": "#1E8449"
+							},
+							{
+								"light": "#fff5e0",
+								"dark": "#BA4A00"
+							},
+							{
+								"light": "#ece0ff",
+								"dark": "#5B2C6F"
+							},
+							{
+								"light": "#ffe9d1",
+								"dark": "#AF601A"
+							},
+							{
+								"light": "#d6faff",
+								"dark": "#117864"
+							},
+							{
+								"light": "#ffe0f0",
+								"dark": "#AD1457"
+							},
+							{
+								"light": "#e0eaff",
+								"dark": "#3F51B5"
+							},
+							{
+								"light": "#e0fff5",
+								"dark": "#00695C"
+							},
+							{
+								"light": "#fffde0",
+								"dark": "#9A7D0A"
+							},
+							{
+								"light": "#e6d6d6",
+								"dark": "#6E2C2C"
+							},
+							{
+								"light": "#d6e6ff",
+								"dark": "#1F618D"
+							},
+							{
+								"light": "#ddf0d0",
+								"dark": "#4A7C29"
 							}
 						],
 						"description": "%config.colors.description%"

@@ -18,6 +18,7 @@ This extension highlights selected words.
 *   `highlight.configuration.ignoreCase`: Whether to ignore case when highlighting. (boolean, default: `false`)
 *   `highlight.configuration.Bold`: Whether the highlighted text should be bold. (boolean, default: `true`)
 *   `highlight.configuration.borderRadius`: Border radius of the highlight. (string, default: `"5px"`)
+*   `highlight.configuration.onlySelectedOccurrence`: Highlight only the occurrence you selected instead of every match in the document. (boolean, default: `false`)
 *   `highlight.configuration.colors`: Colors used for highlighting. (array)
 
 ## Known Issues
