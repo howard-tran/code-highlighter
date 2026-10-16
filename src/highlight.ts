@@ -7,7 +7,7 @@ export class Highlight {
     constructor() {
         this.selectedWords = [];
         this.selectedRanges = [];
-        this.selectedColorIdx = undefined;
+        this.selectedColorIdxs = [];
         this.decorators = [];
         this.config = new Config();
         this.decorators = this.config.GetDecorationTypes();
@@ -17,7 +17,7 @@ export class Highlight {
         log.Info('ClearWords: clearing all highlighted words');
         this.selectedWords = [];
         this.selectedRanges = [];
-        this.selectedColorIdx = undefined;
+        this.selectedColorIdxs = [];
         this.DecorateSelectedWords();
     }
 
@@ -44,21 +44,25 @@ export class Highlight {
             idx = this.selectedWords.findIndex((word) => {
                 return word === '';
             });
+            let colorIdx: number | undefined = undefined;
+            if (this.config.IsOnlySelectedOccurrence()) {
+                // Ask the user for a color index on every command trigger; on cancel fall back to the first color
+                colorIdx = await this.PickColor();
+            }
             if (idx === -1) {
                 this.selectedWords.push(selectedWord);
                 this.selectedRanges.push(selectedRange);
+                this.selectedColorIdxs.push(colorIdx);
             } else {
                 this.selectedWords[idx] = selectedWord;
                 this.selectedRanges[idx] = selectedRange;
-            }
-            if (this.config.IsOnlySelectedOccurrence()) {
-                // Ask the user for a color index on every command trigger; on cancel fall back to the first color
-                this.selectedColorIdx = await this.PickColor();
+                this.selectedColorIdxs[idx] = colorIdx;
             }
         } else {
             // 不真正删除，赋值为''就表示删除；原因：如果删除会导致数组中位置混乱，从而导致重新着色
             this.selectedWords[idx] = '';
             this.selectedRanges[idx] = undefined;
+            this.selectedColorIdxs[idx] = undefined;
         }
 
         this.DecorateSelectedWords();
@@ -106,7 +110,7 @@ export class Highlight {
                 const range = this.ResolveRange(editor.document, selectedWord, this.selectedRanges[idx], text.length);
                 if (range) {
                     // Default to the first color; the index the user picked in highlight.selectedWords takes precedence
-                    const colorIdx = this.selectedColorIdx;
+                    const colorIdx = this.selectedColorIdxs[idx];
                     if (colorIdx !== undefined && colorIdx >= 0 && colorIdx < decorations.length) {
                         decorations[colorIdx].push({ range: range });
                     } else {
@@ -173,7 +177,7 @@ export class Highlight {
                 const range = this.ResolveRange(editor.document, selectedWord, this.selectedRanges[idx], text.length);
                 if (range) {
                     // Default to the first color; the index the user picked in highlight.selectedWords takes precedence
-                    const colorIdx = this.selectedColorIdx;
+                    const colorIdx = this.selectedColorIdxs[idx];
                     if (colorIdx !== undefined && colorIdx >= 0 && colorIdx < decorations.length) {
                         decorations[colorIdx].push({ range: range });
                     } else {
@@ -213,7 +217,7 @@ export class Highlight {
         log.Info(`UpdateConfig: disposing ${this.decorators.length} decorator(s), reloading config`);
         this.selectedWords = [];
         this.selectedRanges = [];
-        this.selectedColorIdx = undefined;
+        this.selectedColorIdxs = [];
         this.decorators.forEach(decorator => decorator.dispose());
         this.config = new Config();
         this.decorators = this.config.GetDecorationTypes();
@@ -295,7 +299,7 @@ export class Highlight {
     private decorators: vscode.TextEditorDecorationType[];
     private selectedWords: string[];
     private selectedRanges: (vscode.Range | undefined)[];
-    private selectedColorIdx: number | undefined;
+    private selectedColorIdxs: (number | undefined)[];
     private config: Config;
     private timeout: any;
 }
