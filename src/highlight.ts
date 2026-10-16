@@ -32,7 +32,7 @@ export class Highlight {
             return;
         }
 
-        // 记录选中位置，用于只高亮选中处的场景
+        // Record the selected range, used by the highlight-only-selected-occurrence mode
         const selectedRange = editor.selection;
 
         // find exist in words
@@ -52,7 +52,7 @@ export class Highlight {
                 this.selectedRanges[idx] = selectedRange;
             }
             if (this.config.IsOnlySelectedOccurrence()) {
-                // 每次触发命令都让用户挑一个颜色索引；取消则使用默认的第一个颜色
+                // Ask the user for a color index on every command trigger; on cancel fall back to the first color
                 this.selectedColorIdx = await this.PickColor();
             }
         } else {
@@ -101,11 +101,11 @@ export class Highlight {
                 return;
             }
 
-            // 只高亮当初选中的那一处
+            // Highlight only the originally selected occurrence
             if (this.config.IsOnlySelectedOccurrence()) {
                 const range = this.ResolveRange(editor.document, selectedWord, this.selectedRanges[idx], text.length);
                 if (range) {
-                    // 默认第一个颜色；用户在触发 highlight.selectedWords 时挑的颜色索引优先
+                    // Default to the first color; the index the user picked in highlight.selectedWords takes precedence
                     const colorIdx = this.selectedColorIdx;
                     if (colorIdx !== undefined && colorIdx >= 0 && colorIdx < decorations.length) {
                         decorations[colorIdx].push({ range: range });
@@ -116,7 +116,7 @@ export class Highlight {
                 return;
             }
 
-            // \b 基于 ASCII 的 \w，非 ASCII 字母（如越南语 Đ）不算单词字符，\bĐảng\b 会匹配失败；改用 Unicode 感知的 lookaround
+            // \b is based on ASCII \w, so non-ASCII letters (e.g. Vietnamese Đ) are not word characters and \bĐảng\b would fail; use Unicode-aware lookaround instead
             const pattern = this.config.IsWholeWord()
                 ? '(?<![\\p{L}\\p{N}_])' + selectedWord + '(?![\\p{L}\\p{N}_])'
                 : selectedWord;
@@ -168,11 +168,11 @@ export class Highlight {
                 return;
             }
 
-            // 只高亮当初选中的那一处
+            // Highlight only the originally selected occurrence
             if (this.config.IsOnlySelectedOccurrence()) {
                 const range = this.ResolveRange(editor.document, selectedWord, this.selectedRanges[idx], text.length);
                 if (range) {
-                    // 默认第一个颜色；用户在触发 highlight.selectedWords 时挑的颜色索引优先
+                    // Default to the first color; the index the user picked in highlight.selectedWords takes precedence
                     const colorIdx = this.selectedColorIdx;
                     if (colorIdx !== undefined && colorIdx >= 0 && colorIdx < decorations.length) {
                         decorations[colorIdx].push({ range: range });
@@ -183,7 +183,7 @@ export class Highlight {
                 return;
             }
 
-            // \b 基于 ASCII 的 \w，非 ASCII 字母（如越南语 Đ）不算单词字符，\bĐảng\b 会匹配失败；改用 Unicode 感知的 lookaround
+            // \b is based on ASCII \w, so non-ASCII letters (e.g. Vietnamese Đ) are not word characters and \bĐảng\b would fail; use Unicode-aware lookaround instead
             const pattern = this.config.IsWholeWord()
                 ? '(?<![\\p{L}\\p{N}_])' + selectedWord + '(?![\\p{L}\\p{N}_])'
                 : selectedWord;
@@ -220,21 +220,21 @@ export class Highlight {
     }
 
     /**
-     * 找回当初选中的范围（文本被编辑后位置可能已经变化）。
-     * 返回 undefined 表示该处已不再是这个单词，跳过高亮。
+     * Recover the originally selected range (positions may have shifted after edits).
+     * Returns undefined when that spot no longer holds the word, skipping the highlight.
      */
     private ResolveRange(document: vscode.TextDocument, escapedWord: string, range: vscode.Range | undefined, textLength: number): vscode.Range | undefined {
         if (!range) {
             return undefined;
         }
-        // GetSelectedWord 对正则特殊字符做了转义，这里还原成原始文本
+        // GetSelectedWord escaped the regex special characters; restore the raw text here
         const rawWord = escapedWord.replace(/\\(.)/g, '$1');
         const safeRange = this.ClampRange(document, range, textLength);
 
         if (document.getText(safeRange) === rawWord) {
             return safeRange;
         }
-        // 位置失效时，尝试取该位置上的单词范围
+        // Position is stale; try the word range at that position
         const wordRange = document.getWordRangeAtPosition(safeRange.start);
         if (wordRange && document.getText(wordRange) === rawWord) {
             return wordRange;
@@ -242,7 +242,7 @@ export class Highlight {
         return undefined;
     }
 
-    // textLength 由调用方传入（调用方已有 text），避免每次调用都 getText() 拷贝整个文档
+    // textLength is passed in by the caller (which already has text) to avoid getText() copying the whole document every call
     private ClampRange(document: vscode.TextDocument, range: vscode.Range, textLength: number): vscode.Range {
         const start = Math.max(0, Math.min(document.offsetAt(range.start), textLength));
         const end = Math.max(start, Math.min(document.offsetAt(range.end), textLength));
@@ -250,8 +250,9 @@ export class Highlight {
     }
 
     /**
-     * 只高亮选中处时，让用户为这个词挑一个颜色（每次触发 highlight.selectedWords 都会问）。
-     * 返回 undefined 表示取消，使用默认的第一个颜色。
+     * In highlight-only-selected-occurrence mode, let the user pick a color for this word
+     * (asked every time highlight.selectedWords is triggered).
+     * Returns undefined when cancelled, using the default first color.
      */
     private async PickColor(): Promise<number | undefined> {
         if (!this.config.IsOnlySelectedOccurrence()) {
