@@ -1,12 +1,13 @@
 
 import * as vscode from 'vscode';
-import {Config} from './config';
+import {Color, Config} from './config';
 import {log} from './logger';
 
 export class Highlight {
     constructor() {
         this.selectedWords = [];
         this.selectedRanges = [];
+        this.selectedColorIdx = undefined;
         this.decorators = [];
         this.config = new Config();
         this.decorators = this.config.GetDecorationTypes();
@@ -16,10 +17,11 @@ export class Highlight {
         log.Info('ClearWords: clearing all highlighted words');
         this.selectedWords = [];
         this.selectedRanges = [];
+        this.selectedColorIdx = undefined;
         this.DecorateSelectedWords();
     }
 
-    public SelectedWords(): void {
+    public async SelectedWords(): Promise<void> {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
             return;
@@ -49,6 +51,10 @@ export class Highlight {
                 this.selectedWords[idx] = selectedWord;
                 this.selectedRanges[idx] = selectedRange;
             }
+            if (this.config.IsOnlySelectedOccurrence()) {
+                // 每次触发命令都让用户挑一个颜色索引；取消则使用默认的第一个颜色
+                this.selectedColorIdx = await this.PickColor();
+            }
         } else {
             // 不真正删除，赋值为''就表示删除；原因：如果删除会导致数组中位置混乱，从而导致重新着色
             this.selectedWords[idx] = '';
@@ -74,6 +80,9 @@ export class Highlight {
         if (!editor) {
             return;
         }
+        if (this.decorators.length === 0) {
+            return;
+        }
 
         let decorations: vscode.DecorationOptions[][] = [];
         this.decorators.forEach(() => {
@@ -96,7 +105,13 @@ export class Highlight {
             if (this.config.IsOnlySelectedOccurrence()) {
                 const range = this.ResolveRange(editor.document, selectedWord, this.selectedRanges[idx], text.length);
                 if (range) {
-                    decorations[idx % decorations.length].push({ range: range });
+                    // 默认第一个颜色；用户在触发 highlight.selectedWords 时挑的颜色索引优先
+                    const colorIdx = this.selectedColorIdx;
+                    if (colorIdx !== undefined && colorIdx >= 0 && colorIdx < decorations.length) {
+                        decorations[colorIdx].push({ range: range });
+                    } else {
+                        decorations[0].push({ range: range });
+                    }
                 }
                 return;
             }
@@ -132,6 +147,9 @@ export class Highlight {
         if (!editor) {
             return;
         }
+        if (this.decorators.length === 0) {
+            return;
+        }
 
         let decorations: vscode.DecorationOptions[][] = [];
         this.decorators.forEach(() => {
@@ -154,7 +172,13 @@ export class Highlight {
             if (this.config.IsOnlySelectedOccurrence()) {
                 const range = this.ResolveRange(editor.document, selectedWord, this.selectedRanges[idx], text.length);
                 if (range) {
-                    decorations[idx % decorations.length].push({ range: range });
+                    // 默认第一个颜色；用户在触发 highlight.selectedWords 时挑的颜色索引优先
+                    const colorIdx = this.selectedColorIdx;
+                    if (colorIdx !== undefined && colorIdx >= 0 && colorIdx < decorations.length) {
+                        decorations[colorIdx].push({ range: range });
+                    } else {
+                        decorations[0].push({ range: range });
+                    }
                 }
                 return;
             }
@@ -189,6 +213,7 @@ export class Highlight {
         log.Info(`UpdateConfig: disposing ${this.decorators.length} decorator(s), reloading config`);
         this.selectedWords = [];
         this.selectedRanges = [];
+        this.selectedColorIdx = undefined;
         this.decorators.forEach(decorator => decorator.dispose());
         this.config = new Config();
         this.decorators = this.config.GetDecorationTypes();
@@ -224,6 +249,31 @@ export class Highlight {
         return new vscode.Range(document.positionAt(start), document.positionAt(end));
     }
 
+    /**
+     * 只高亮选中处时，让用户为这个词挑一个颜色（每次触发 highlight.selectedWords 都会问）。
+     * 返回 undefined 表示取消，使用默认的第一个颜色。
+     */
+    private async PickColor(): Promise<number | undefined> {
+        if (!this.config.IsOnlySelectedOccurrence()) {
+            return undefined;
+        }
+        const colors = this.config.GetColors();
+        if (colors.length === 0) {
+            return undefined;
+        }
+
+        const items: vscode.QuickPickItem[] = colors.map((color: Color, i: number) => ({
+            label: `Color ${i + 1}`,
+            description: `${color.light} / ${color.dark}`
+        }));
+        const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Pick a highlight color' });
+        if (!picked) {
+            return undefined;
+        }
+        const idx = items.indexOf(picked);
+        return idx >= 0 ? idx : undefined;
+    }
+
     private GetSelectedWord(editor: vscode.TextEditor) : string {
         const select = editor.selection;
         let selectedWord = editor.document.getText(select);
@@ -244,6 +294,7 @@ export class Highlight {
     private decorators: vscode.TextEditorDecorationType[];
     private selectedWords: string[];
     private selectedRanges: (vscode.Range | undefined)[];
+    private selectedColorIdx: number | undefined;
     private config: Config;
     private timeout: any;
 }

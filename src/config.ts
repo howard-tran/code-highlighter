@@ -2,7 +2,7 @@
 import * as vscode from 'vscode';
 import {log} from './logger';
 
-interface Color {
+export interface Color {
     light: string;
     dark: string;
 }
@@ -28,6 +28,7 @@ export class Config {
         // 获取所有颜色
         this.decorationTypes = [];
         const colors = config.get<Color[]>('highlight.configuration.colors');
+        this.colors = colors ? colors : [];
 
         if (colors) {
             colors.forEach((color: Color) => {
@@ -69,9 +70,12 @@ export class Config {
     }
 
     public GetDecorationTypes(): vscode.TextEditorDecorationType[] {
-        if (!this.onlySelectedOccurrence)
-            return this.decorationTypes;
-        else return [this.decorationTypes[3]];
+        // 只高亮选中处时也需要全部颜色（用户可以挑一个），所以始终返回全部
+        return this.decorationTypes;
+    }
+
+    public GetColors(): Color[] {
+        return this.colors;
     }
 
     private wholeWord: boolean;
@@ -80,4 +84,5 @@ export class Config {
     private borderRadius: string;
     private onlySelectedOccurrence: boolean;
     private decorationTypes: vscode.TextEditorDecorationType[];
+    private colors: Color[];
 }

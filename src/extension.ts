@@ -11,10 +11,10 @@ export function activate(context: vscode.ExtensionContext) {
 
 	let highlight: Highlight = new Highlight();
 
-	let disposable = vscode.commands.registerCommand('highlight.selectedWords', () => {
+	let disposable = vscode.commands.registerCommand('highlight.selectedWords', async () => {
 		log.Info('command: highlight.selectedWords');
 		try {
-			highlight.SelectedWords();
+			await highlight.SelectedWords();
 		} catch (e) {
 			log.Exception('highlight.selectedWords failed', e);
 			throw e;
