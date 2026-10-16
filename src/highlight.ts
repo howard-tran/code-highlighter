@@ -3,21 +3,34 @@ import * as vscode from 'vscode';
 import {Color, Config} from './config';
 import {log} from './logger';
 
+/**
+ * One highlighted word inside one file.
+ * `word` is regex-escaped; `word === ''` means the slot was deleted
+ * (kept in place so the remaining words don't change their color index).
+ */
+interface HighlightEntry {
+    word: string;
+    range: vscode.Range | undefined;
+    colorIdx: number | undefined;
+}
+
 export class Highlight {
     constructor() {
-        this.selectedWords = [];
-        this.selectedRanges = [];
-        this.selectedColorIdxs = [];
+        this.selectedByUri = new Map();
         this.decorators = [];
         this.config = new Config();
         this.decorators = this.config.GetDecorationTypes();
     }
 
     public ClearWords(): void {
-        log.Info('ClearWords: clearing all highlighted words');
-        this.selectedWords = [];
-        this.selectedRanges = [];
-        this.selectedColorIdxs = [];
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            log.Info('ClearWords: no active editor, nothing to clear');
+            return;
+        }
+        const uri = editor.document.uri.toString();
+        log.Info(`ClearWords: clearing highlighted words of ${uri}`);
+        this.selectedByUri.delete(uri);
         this.DecorateSelectedWords();
     }
 
@@ -27,49 +40,48 @@ export class Highlight {
             return;
         }
         let selectedWord = this.GetSelectedWord(editor);
-        log.Info(`SelectedWords: word="${selectedWord}" file=${editor.document.uri.toString()}`);
+        const uri = editor.document.uri.toString();
+        log.Info(`SelectedWords: word="${selectedWord}" file=${uri}`);
         if (selectedWord === "") {
             return;
         }
 
         // Record the selected range, used by the highlight-only-selected-occurrence mode
         const selectedRange = editor.selection;
+        const entries = this.EntriesFor(editor.document);
 
-        // find exist in words
-        let idx = this.selectedWords.findIndex((word) => {
-            return word === selectedWord;
+        // find exist in words per entry
+        let idx = entries.findIndex((entry) => {
+            return entry.word === selectedWord;
         });
         if (idx === -1) {
             // 加入列表，先找等于''的位置
-            idx = this.selectedWords.findIndex((word) => {
-                return word === '';
+            idx = entries.findIndex((entry) => {
+                return entry.word === '';
             });
             let colorIdx: number | undefined = undefined;
             if (this.config.IsOnlySelectedOccurrence()) {
                 // Ask the user for a color index on every command trigger; on cancel fall back to the first color
                 colorIdx = await this.PickColor();
             }
+            const entry: HighlightEntry = { word: selectedWord, range: selectedRange, colorIdx: colorIdx };
             if (idx === -1) {
-                this.selectedWords.push(selectedWord);
-                this.selectedRanges.push(selectedRange);
-                this.selectedColorIdxs.push(colorIdx);
+                entries.push(entry);
             } else {
-                this.selectedWords[idx] = selectedWord;
-                this.selectedRanges[idx] = selectedRange;
-                this.selectedColorIdxs[idx] = colorIdx;
+                entries[idx] = entry;
             }
         } else {
             // 不真正删除，赋值为''就表示删除；原因：如果删除会导致数组中位置混乱，从而导致重新着色
-            this.selectedWords[idx] = '';
-            this.selectedRanges[idx] = undefined;
-            this.selectedColorIdxs[idx] = undefined;
+            entries[idx].word = '';
+            entries[idx].range = undefined;
+            entries[idx].colorIdx = undefined;
         }
 
         this.DecorateSelectedWords();
         this.DecorateSelectedWords_02();
     }
 
-    public RefeshSelectedWords(): void {
+    public RefreshSelectedWords(): void {
         if (this.timeout) {
             clearTimeout(this.timeout);
         }
@@ -96,21 +108,19 @@ export class Highlight {
 
         const text = editor.document.getText();
         const flags = this.config.IsIgnoreCase() ? 'giu' : 'gu';
-        // log.Info(`DecorateSelectedWords: file=${editor.document.uri.toString()} ` +
-        //     `words=[${this.selectedWords.filter(w => w !== '').join(', ')}] ` +
-        //     `wholeWord=${this.config.IsWholeWord()} ignoreCase=${this.config.IsIgnoreCase()} ` +
-        //     `onlyOccurrence=${this.config.IsOnlySelectedOccurrence()} decorators=${this.decorators.length}`);
-        this.selectedWords.forEach((selectedWord: string, idx: number) => {
+        const entries = this.EntriesFor(editor.document);
+        entries.forEach((entry, idx: number) => {
+            const selectedWord = entry.word;
             if (selectedWord === '') {
                 return;
             }
 
             // Highlight only the originally selected occurrence
             if (this.config.IsOnlySelectedOccurrence()) {
-                const range = this.ResolveRange(editor.document, selectedWord, this.selectedRanges[idx], text.length);
+                const range = this.ResolveRange(editor.document, selectedWord, entry.range, text.length);
                 if (range) {
                     // Default to the first color; the index the user picked in highlight.selectedWords takes precedence
-                    const colorIdx = this.selectedColorIdxs[idx];
+                    const colorIdx = entry.colorIdx;
                     if (colorIdx !== undefined && colorIdx >= 0 && colorIdx < decorations.length) {
                         decorations[colorIdx].push({ range: range });
                     } else {
@@ -163,21 +173,25 @@ export class Highlight {
 
         const text = editor.document.getText();
         const flags = this.config.IsIgnoreCase() ? 'giu' : 'gu';
+        // Only the words highlighted in *this* file are decorated; every decorator is
+        // overwritten below, so words of other files never leak into this editor.
+        const entries = this.EntriesFor(editor.document);
         // log.Info(`DecorateSelectedWords: file=${editor.document.uri.toString()} ` +
-        //     `words=[${this.selectedWords.filter(w => w !== '').join(', ')}] ` +
+        //     `words=[${entries.filter(e => e.word !== '').map(e => e.word).join(', ')}] ` +
         //     `wholeWord=${this.config.IsWholeWord()} ignoreCase=${this.config.IsIgnoreCase()} ` +
         //     `onlyOccurrence=${this.config.IsOnlySelectedOccurrence()} decorators=${this.decorators.length}`);
-        this.selectedWords.forEach((selectedWord: string, idx: number) => {
+        entries.forEach((entry, idx: number) => {
+            const selectedWord = entry.word;
             if (selectedWord === '') {
                 return;
             }
 
             // Highlight only the originally selected occurrence
             if (this.config.IsOnlySelectedOccurrence()) {
-                const range = this.ResolveRange(editor.document, selectedWord, this.selectedRanges[idx], text.length);
+                const range = this.ResolveRange(editor.document, selectedWord, entry.range, text.length);
                 if (range) {
                     // Default to the first color; the index the user picked in highlight.selectedWords takes precedence
-                    const colorIdx = this.selectedColorIdxs[idx];
+                    const colorIdx = entry.colorIdx;
                     if (colorIdx !== undefined && colorIdx >= 0 && colorIdx < decorations.length) {
                         decorations[colorIdx].push({ range: range });
                     } else {
@@ -215,12 +229,21 @@ export class Highlight {
 
     public UpdateConfig(): void {
         log.Info(`UpdateConfig: disposing ${this.decorators.length} decorator(s), reloading config`);
-        this.selectedWords = [];
-        this.selectedRanges = [];
-        this.selectedColorIdxs = [];
+        this.selectedByUri.clear();
         this.decorators.forEach(decorator => decorator.dispose());
         this.config = new Config();
         this.decorators = this.config.GetDecorationTypes();
+    }
+
+    /** Words highlighted in the given file, keyed by document URI. */
+    private EntriesFor(document: vscode.TextDocument): HighlightEntry[] {
+        const key = document.uri.toString();
+        let entries = this.selectedByUri.get(key);
+        if (!entries) {
+            entries = [];
+            this.selectedByUri.set(key, entries);
+        }
+        return entries;
     }
 
     /**
@@ -296,10 +319,9 @@ export class Highlight {
         return selectedWord.replace(/([.*+?^=!:${}()|\[\]\/\\])/g, "\\$1");
     }
 
+    // Highlight state is per file URI; the decoration types themselves are shared
+    private selectedByUri: Map<string, HighlightEntry[]>;
     private decorators: vscode.TextEditorDecorationType[];
-    private selectedWords: string[];
-    private selectedRanges: (vscode.Range | undefined)[];
-    private selectedColorIdxs: (number | undefined)[];
     private config: Config;
     private timeout: any;
 }

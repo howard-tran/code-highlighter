@@ -46,7 +46,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 	vscode.workspace.onDidChangeTextDocument(_ => {
 		// log.Info(`onDidChangeTextDocument: ${e.document.uri.toString()}`);
-		highlight.RefeshSelectedWords();
+		highlight.RefreshSelectedWords();
 	});
 
 	vscode.window.onDidChangeActiveTextEditor(_ => {
