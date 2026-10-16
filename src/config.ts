@@ -3,6 +3,8 @@ import * as vscode from 'vscode';
 import {log} from './logger';
 
 export interface Color {
+    /** 可选的颜色名（来自配置项，例如 "red-1"） */
+    name?: string;
     light: string;
     dark: string;
 }

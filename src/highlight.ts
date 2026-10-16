@@ -263,7 +263,7 @@ export class Highlight {
         }
 
         const items: vscode.QuickPickItem[] = colors.map((color: Color, i: number) => ({
-            label: `Color ${i + 1}`,
+            label: color.name ? `${color.name}` : `Color ${i + 1}`,
             description: `${color.light} / ${color.dark}`
         }));
         const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Pick a highlight color' });
