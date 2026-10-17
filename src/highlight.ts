@@ -39,7 +39,7 @@ export class Highlight {
         if (!editor) {
             return;
         }
-        let selectedWord = this.GetSelectedWord(editor);
+        let selectedWord = this.GetSelectedWord(editor.document, editor.selection);
         const uri = editor.document.uri.toString();
         log.Info(`SelectedWords: word="${selectedWord}" file=${uri}`);
         if (selectedWord === "") {
@@ -302,13 +302,16 @@ export class Highlight {
         return idx >= 0 ? idx : undefined;
     }
 
-    private GetSelectedWord(editor: vscode.TextEditor) : string {
-        const select = editor.selection;
-        let selectedWord = editor.document.getText(select);
+    /**
+     * Word of one selection (empty selection falls back to the word at its start),
+     * regex-escaped. "" when there is nothing to highlight.
+     */
+    private GetSelectedWord(document: vscode.TextDocument, selection: vscode.Selection): string {
+        let selectedWord = document.getText(selection);
         if (!selectedWord) {
-            const range = editor.document.getWordRangeAtPosition(select.start);
+            const range = document.getWordRangeAtPosition(selection.start);
             if (range) {
-                selectedWord = editor.document.getText(range);
+                selectedWord = document.getText(range);
             }
         }
 
