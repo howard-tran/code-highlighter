@@ -39,46 +39,94 @@ export class Highlight {
         if (!editor) {
             return;
         }
-        let selectedWord = this.GetSelectedWord(editor.document, editor.selection);
         const uri = editor.document.uri.toString();
-        log.Info(`SelectedWords: word="${selectedWord}" file=${uri}`);
-        if (selectedWord === "") {
+        const onlyOccurrence = this.config.IsOnlySelectedOccurrence();
+
+        // Collect the (word, range) of every cursor in one pass.
+        // - occurrence mode: one pick per cursor (keyed by range), so several cursors on
+        //   the same word highlight several occurrences;
+        // - word mode: deduped by word, so a word picked by many cursors toggles only once.
+        const picks: { word: string; range: vscode.Selection }[] = [];
+        const seenWords = new Set<string>();
+        for (const sel of editor.selections) {
+            const word = this.GetSelectedWord(editor.document, sel);
+            if (word === "") {
+                continue;
+            }
+            if (onlyOccurrence) {
+                picks.push({ word, range: sel });
+            } else if (!seenWords.has(word)) {
+                seenWords.add(word);
+                picks.push({ word, range: sel });
+            }
+        }
+        if (picks.length === 0) {
             return;
         }
+        log.Info(`SelectedWords: words=[${picks.map(p => p.word).join(', ')}] cursors=${picks.length} mode=${onlyOccurrence ? 'occurrence' : 'word'} file=${uri}`);
 
-        // Record the selected range, used by the highlight-only-selected-occurrence mode
-        const selectedRange = editor.selection;
         const entries = this.EntriesFor(editor.document);
-
-        // find exist in words per entry
-        let idx = entries.findIndex((entry) => {
-            return entry.word === selectedWord;
-        });
-        if (idx === -1) {
-            // 加入列表，先找等于''的位置
-            idx = entries.findIndex((entry) => {
-                return entry.word === '';
-            });
-            let colorIdx: number | undefined = undefined;
-            if (this.config.IsOnlySelectedOccurrence()) {
-                // Ask the user for a color index on every command trigger; on cancel fall back to the first color
-                colorIdx = await this.PickColor();
-            }
-            const entry: HighlightEntry = { word: selectedWord, range: selectedRange, colorIdx: colorIdx };
-            if (idx === -1) {
-                entries.push(entry);
-            } else {
-                entries[idx] = entry;
-            }
-        } else {
-            // 不真正删除，赋值为''就表示删除；原因：如果删除会导致数组中位置混乱，从而导致重新着色
-            entries[idx].word = '';
-            entries[idx].range = undefined;
-            entries[idx].colorIdx = undefined;
+        let colorIdx: number | undefined = undefined;
+        if (onlyOccurrence && picks.some(p => this.FindEntryByRange(entries, p.range) === -1)) {
+            // Ask the user for a color index once per command trigger, and only when at
+            // least one cursor actually adds a highlight; on cancel fall back to the first color
+            colorIdx = await this.PickColor();
+        }
+        for (const { word, range } of picks) {
+            this.EntryHandle(entries, word, range, colorIdx);
         }
 
         this.DecorateSelectedWords();
         this.DecorateSelectedWords_02();
+    }
+
+    /**
+     * Toggle one (word, range) pick: add it when it is not highlighted yet,
+     * empty its slot otherwise (see EmptyEntry for why slots are kept).
+     */
+    private EntryHandle(entries: HighlightEntry[], word: string, range: vscode.Range, colorIdx: number | undefined): void {
+        let idx: number;
+        if (this.config.IsOnlySelectedOccurrence()) {
+            // One highlight per cursor: entries are keyed by their original range
+            idx = this.FindEntryByRange(entries, range);
+            if (idx === -1) {
+                this.AddEntry(entries, { word: word, range: range, colorIdx: colorIdx });
+                return;
+            }
+        } else {
+            // find exist in words per entry
+            idx = entries.findIndex(entry => entry.word === word);
+            if (idx === -1) {
+                this.AddEntry(entries, { word: word, range: range, colorIdx: undefined });
+                return;
+            }
+        }
+        this.EmptyEntry(entries, idx);
+    }
+
+    /**
+     * 不真正删除，赋值为''就表示删除；原因：如果删除会导致数组中位置混乱，从而导致重新着色
+     * (keep the slot so the remaining words don't change their color index).
+     */
+    private EmptyEntry(entries: HighlightEntry[], idx: number): void {
+        entries[idx].word = '';
+        entries[idx].range = undefined;
+        entries[idx].colorIdx = undefined;
+    }
+
+    /** Reuse a deleted slot (word === '') when there is one, otherwise append. */
+    private AddEntry(entries: HighlightEntry[], entry: HighlightEntry): void {
+        const idx = entries.findIndex(e => e.word === '');
+        if (idx === -1) {
+            entries.push(entry);
+        } else {
+            entries[idx] = entry;
+        }
+    }
+
+    /** Index of the entry holding exactly this range (vscode.Range.isEqual compares both positions). */
+    private FindEntryByRange(entries: HighlightEntry[], range: vscode.Range): number {
+        return entries.findIndex(e => e.range !== undefined && e.range.isEqual(range));
     }
 
     public RefreshSelectedWords(): void {
