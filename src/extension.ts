@@ -72,10 +72,10 @@ export function activate(context: vscode.ExtensionContext) {
 
 	});
 
-	vscode.window.onDidChangeActiveTextEditor(_ => {
-		// log.Info(`onDidChangeActiveTextEditor: ${editor ? editor.document.uri.toString() : '<none>'}`);
-		highlight.RefreshSelectedWords();
-	});
+	// vscode.window.onDidChangeActiveTextEditor(_ => {
+	// 	// log.Info(`onDidChangeActiveTextEditor: ${editor ? editor.document.uri.toString() : '<none>'}`);
+	// 	highlight.RefreshSelectedWords();
+	// });
 
 	vscode.window.onDidChangeTextEditorSelection(_ => {
 		// e.textEditor, e.selections, e.kind

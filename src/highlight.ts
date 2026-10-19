@@ -15,18 +15,12 @@ interface HighlightEntry {
 }
 
 export class Highlight {
-    private selectionMode: boolean;
 
     constructor() {
         this.selectedByUri = new Map();
         this.decorators = [];
         this.config = new Config();
         this.decorators = this.config.GetDecorationTypes();
-        this.selectionMode = false;
-    }
-
-    public setSelectionMode(val: boolean): void {
-        this.selectionMode = val;
     }
 
     public ClearWords(): void {
@@ -90,7 +84,7 @@ export class Highlight {
         }
 
         this.DecorateSelectedWords();
-        this.DecorateSelectedWords_02();
+        // this.DecorateSelectedWords_02();
     }
 
     /**
@@ -219,7 +213,7 @@ export class Highlight {
      * - 2 case covered
      *      + edit line at the same line of range's line
      *          + formula = insLine, insChar + deltaChar
-     *      + edit line before range's line 
+     *      + edit line before range's line
      *          + formula = pos.line + deltaLine, pos.char
      */
     private static ShiftPosition(pos: vscode.Position, change: vscode.TextDocumentContentChangeEvent): vscode.Position {
@@ -227,7 +221,7 @@ export class Highlight {
         const editEnd = change.range.end;
 
         const text = change.text;
-        // end position of a multiline change text 
+        // end position of a multiline change text
         const lastNl = text.lastIndexOf('\n');
         const lineCount = text.split('\n').length - 1; // "abcd\n".split("\n") = 2;
         const leftOverNL = text.length - lastNl - 1; // leftOver("0123456\n12") = 2
@@ -316,6 +310,7 @@ export class Highlight {
 
         this.decorators.forEach((decorator: vscode.TextEditorDecorationType, idx: number) => {
             // log.Info(`  decorator[${idx}]: ${decorations[idx].length} range(s)`);
+            // editor.setDecorations(decorator, this.ExcludeSelections(editor, decorations[idx]));
             editor.setDecorations(decorator, decorations[idx]);
         });
     }
@@ -387,6 +382,7 @@ export class Highlight {
 
         this.decorators.forEach((decorator: vscode.TextEditorDecorationType, idx: number) => {
             // log.Info(`  decorator[${idx}]: ${decorations[idx].length} range(s)`);
+            // editor.setDecorations(decorator, this.ExcludeSelections(editor, decorations[idx]));
             editor.setDecorations(decorator, decorations[idx]);
         });
     }
@@ -431,6 +427,57 @@ export class Highlight {
             return wordRange;
         }
         return undefined;
+    }
+
+    /**
+     * Rebuild decoration ranges so none of them overlaps the current selection(s),
+     * which would be hidden behind VS Code's default selection color.
+     * Done as interval subtraction on document offsets: every decoration range is
+     * split around the selections it intersects, keeping only the non-empty forward
+     * pieces before/between/after them.
+     */
+    private ExcludeSelections(editor: vscode.TextEditor, decorations: vscode.DecorationOptions[]): vscode.DecorationOptions[] {
+        const document = editor.document;
+        // Empty selections are just a caret; they never cover any text, so skip them
+        const excluded = editor.selections
+            .filter(sel => !sel.isEmpty)
+            .map(sel => [document.offsetAt(sel.start), document.offsetAt(sel.end)] as [number, number]);
+        if (excluded.length === 0) {
+            return decorations;
+        }
+
+        const result: vscode.DecorationOptions[] = [];
+        for (const decoration of decorations) {
+            const start = document.offsetAt(decoration.range.start);
+            const end = document.offsetAt(decoration.range.end);
+            if (start >= end) {
+                continue; // empty range, nothing to draw anyway
+            }
+
+            // Selections intersecting this range, sorted and clipped to it
+            const cuts = excluded
+                .map(([selStart, selEnd]): [number, number] => [Math.max(selStart, start), Math.min(selEnd, end)])
+                .filter(([selStart, selEnd]) => selStart < selEnd)
+                .sort((a, b) => a[0] - b[0]);
+
+            let cursor = start;
+            for (const [selStart, selEnd] of cuts) {
+                if (selStart > cursor) {
+                    result.push({
+                        ...decoration,
+                        range: new vscode.Range(document.positionAt(cursor), document.positionAt(selStart))
+                    });
+                }
+                cursor = Math.max(cursor, selEnd);
+            }
+            if (cursor < end) {
+                result.push({
+                    ...decoration,
+                    range: new vscode.Range(document.positionAt(cursor), document.positionAt(end))
+                });
+            }
+        }
+        return result;
     }
 
     // textLength is passed in by the caller (which already has text) to avoid getText() copying the whole document every call
