@@ -47,22 +47,27 @@ export function activate(context: vscode.ExtensionContext) {
 	vscode.workspace.onDidChangeTextDocument(e => {
 		// log.Info(`onDidChangeTextDocument: ${e.document.uri.toString()} changes=${e.contentChanges.length}`);
 		// keep the stored occurrence ranges in sync with the edit before redrawing
-		// highlight.UpdateRanges(e);
-
-		highlight.RefreshSelectedWords();
 		
 		const activeDocument = vscode.window.activeTextEditor?.document;
 
 		if (!activeDocument || e.document !== activeDocument) return;
-		if (e.contentChanges.length <= 0) return;
 		
+		highlight.UpdateRanges(e);
+		highlight.RefreshSelectedWords();
+
+		if (e.contentChanges.length <= 0) return;
+
 		log.Info(`onDidChangeTextDocument: ${e.document.uri.toString()} changes=${e.contentChanges.length}`);
 		e.contentChanges.forEach((c, i) => {
 			const s = `${c.range.start.line}:${c.range.start.character}`;
 			const t = `${c.range.end.line}:${c.range.end.character}`;
 			const kind = c.range.isEmpty ? 'insert' : (c.text === '' ? 'delete' : 'replace');
-			const shown = c.text.length > 60 ? c.text.slice(0, 60) + '…' : c.text;
-			log.Info(`  [${i}] ${kind} (${s})-(${t}) rangeLength=${c.rangeLength} text=${JSON.stringify(shown)}`);
+			log.Info(`  [${i}] ${kind} (${s})-(${t}) rangeLength=${c.rangeLength}`);
+			log.Info(`    text=${JSON.stringify(c.text)}`);
+			const lastNl = c.text.lastIndexOf('\n');
+			log.Info(`    lastNl=${lastNl}`);
+			log.Info(`    lastLineLen=${c.text.length - lastNl - 1}`);
+			log.Info(`    lineCount=${c.text.split('\n').length}`);
 		});
 
 	});

@@ -39,6 +39,12 @@ export class Highlight {
         if (!editor) {
             return;
         }
+        // HERE
+        editor.selections.forEach((sel) => {
+            const s = `${sel.start.line}:${sel.start.character}`;
+            const t = `${sel.end.line}:${sel.end.character}`;
+            log.Info(`Selected:  (${s})-(${t})`);
+        });
         const uri = editor.document.uri.toString();
         const onlyOccurrence = this.config.IsOnlySelectedOccurrence();
 
@@ -90,14 +96,14 @@ export class Highlight {
             // One highlight per cursor: entries are keyed by their original range
             idx = this.FindEntryByRange(entries, range);
             if (idx === -1) {
-                this.AddEntry(entries, { word: word, range: range, colorIdx: colorIdx });
+                this.UpdateEntry(entries, { word: word, range: range, colorIdx: colorIdx });
                 return;
             }
         } else {
             // find exist in words per entry
             idx = entries.findIndex(entry => entry.word === word);
             if (idx === -1) {
-                this.AddEntry(entries, { word: word, range: range, colorIdx: undefined });
+                this.UpdateEntry(entries, { word: word, range: range, colorIdx: undefined });
                 return;
             }
         }
@@ -114,9 +120,17 @@ export class Highlight {
         entries[idx].colorIdx = undefined;
     }
 
-    /** Reuse a deleted slot (word === '') when there is one, otherwise append. */
-    private AddEntry(entries: HighlightEntry[], entry: HighlightEntry): void {
-        const idx = entries.findIndex(e => e.word === '');
+    /**
+     * Add the new entry, reusing a deleted slot when there is one, otherwise append.
+     *
+     * - highlight-only-selected-occurrence mode: a slot is reusable when its range is
+     *   empty (undefined, or start === end), because the range is the identity here.
+     * - otherwise: a slot is reusable when its word was emptied ('').
+     */
+    private UpdateEntry(entries: HighlightEntry[], entry: HighlightEntry): void {
+        const idx = this.config.IsOnlySelectedOccurrence()
+            ? entries.findIndex(e => e.range === undefined || e.range.start.isEqual(e.range.end))
+            : entries.findIndex(e => e.word === '');
         if (idx === -1) {
             entries.push(entry);
         } else {
@@ -127,6 +141,98 @@ export class Highlight {
     /** Index of the entry holding exactly this range (vscode.Range.isEqual compares both positions). */
     private FindEntryByRange(entries: HighlightEntry[], range: vscode.Range): number {
         return entries.findIndex(e => e.range !== undefined && e.range.isEqual(range));
+    }
+
+    /**
+     * Invalidate the stored occurrence ranges that an edit intersects, so the remaining
+     * ones still point at the originally highlighted text. Only needed in
+     * highlight-only-selected-occurrence mode, where the entry's range *is* the identity
+     * of the highlight.
+     *
+     * `change.range` is where the edit happened in the document *before* this change.
+     */
+    public UpdateRanges(e: vscode.TextDocumentChangeEvent): void {
+        if (!this.config.IsOnlySelectedOccurrence()) {
+            return;
+        }
+        if (e.contentChanges.length === 0) {
+            return;
+        }
+        const entries = this.selectedByUri.get(e.document.uri.toString());
+        if (!entries || entries.every(entry => entry.range === undefined)) {
+            return;
+        }
+
+        // Multi-line changes shift later lines, so changes are applied from the bottom of
+        // the file upwards to keep the coordinates of the not-yet-processed ones valid.
+        const changes = e.contentChanges.slice().sort((a, b) =>
+            b.range.start.line - a.range.start.line || b.range.start.character - a.range.start.character);
+
+        for (const entry of entries) {
+            if (entry.range === undefined) {
+                continue;
+            }
+            let range: vscode.Range | undefined = entry.range;
+            for (const change of changes) {
+                range = Highlight.ShiftRange(range, change);
+                if (range === undefined) {
+                    break;
+                }
+            }
+            entry.range = range;
+        }
+    }
+
+    /**
+     * Check one content change against the stored range:
+     * let the range be (s1, e1) and the edit range be (s2, e2).
+     * - s2 >= e1 (edit fully after the range) -> range unchanged
+     * - e2 <= s1 (edit fully before the range) -> range shifted by the edit delta
+     *   (vscode does not move stored ranges, the coordinates must be recalculated)
+     * - otherwise the edit intersects the range -> undefined (the highlighted text changed)
+     */
+    private static ShiftRange(range: vscode.Range, change: vscode.TextDocumentContentChangeEvent): vscode.Range | undefined {
+        const editStart = change.range.start;
+        const editEnd = change.range.end;
+        if (editStart.isAfterOrEqual(range.end)) {
+            return range;
+        }
+        if (editEnd.isBeforeOrEqual(range.start)) {
+            return new vscode.Range(
+                Highlight.ShiftPosition(range.start, change),
+                Highlight.ShiftPosition(range.end, change));
+        }
+        return undefined;
+    }
+
+    /**
+     * - position before the edit       -> unchanged
+     * - position strictly inside       -> start of the edit (the old text there is gone)
+     * - position at/after the edit end -> shifted by the length difference of the inserted text
+     *   (a position sitting exactly at the edit end belongs to the text *after* the edit,
+     *    e.g. an edit that stops right in front of the word must push the word, not swallow it)
+     */
+    private static ShiftPosition(pos: vscode.Position, change: vscode.TextDocumentContentChangeEvent): vscode.Position {
+        const editStart = change.range.start;
+        const editEnd = change.range.end;
+
+        // end position of the inserted text (change.text may span several lines)
+        const text = change.text;
+        const lastNl = text.lastIndexOf('\n');
+        const lineCount = text.split('\n').length - 1; // "abcd\n".split("\n") = 2;
+        const leftOverNL = text.length - lastNl - 1; // leftOver("0123456\n12") = 2
+        const newLine = editStart.line + lineCount;
+        const newChar = editStart.character + text.length;
+
+        const insLine = lastNl === -1 ? editStart.line : newLine;
+        const insChar = lastNl === -1 ? newChar : leftOverNL;
+        const distanceChar = pos.character - editEnd.character;
+        const distanceLine = insLine - editEnd.line;
+
+        if (pos.line === editEnd.line) {
+            return new vscode.Position(insLine, insChar + distanceChar);
+        }
+        return new vscode.Position(pos.line + distanceLine, pos.character);
     }
 
     public RefreshSelectedWords(): void {
@@ -195,11 +301,11 @@ export class Highlight {
 
                 execArray = regEx.exec(text);
             }
-            log.Info(`  "${selectedWord}" -> pattern="${pattern}" flags=${flags}, ${matchCount} match(es)`);
+            // log.Info(`  "${selectedWord}" -> pattern="${pattern}" flags=${flags}, ${matchCount} match(es)`);
         });
 
         this.decorators.forEach((decorator: vscode.TextEditorDecorationType, idx: number) => {
-            log.Info(`  decorator[${idx}]: ${decorations[idx].length} range(s)`);
+            // log.Info(`  decorator[${idx}]: ${decorations[idx].length} range(s)`);
             editor.setDecorations(decorator, decorations[idx]);
         });
     }
