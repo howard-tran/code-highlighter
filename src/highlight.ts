@@ -15,11 +15,18 @@ interface HighlightEntry {
 }
 
 export class Highlight {
+    private selectionMode: boolean;
+
     constructor() {
         this.selectedByUri = new Map();
         this.decorators = [];
         this.config = new Config();
         this.decorators = this.config.GetDecorationTypes();
+        this.selectionMode = false;
+    }
+
+    public setSelectionMode(val: boolean): void {
+        this.selectionMode = val;
     }
 
     public ClearWords(): void {
@@ -206,18 +213,21 @@ export class Highlight {
     }
 
     /**
-     * - position before the edit       -> unchanged
-     * - position strictly inside       -> start of the edit (the old text there is gone)
-     * - position at/after the edit end -> shifted by the length difference of the inserted text
-     *   (a position sitting exactly at the edit end belongs to the text *after* the edit,
-     *    e.g. an edit that stops right in front of the word must push the word, not swallow it)
+     * - Given a vscode range(start, end)
+     * - start, end = vscode position(line, char). line = row number, char = column number
+     * - calculate the delta and update the range according to the change.
+     * - 2 case covered
+     *      + edit line at the same line of range's line
+     *          + formula = insLine, insChar + deltaChar
+     *      + edit line before range's line 
+     *          + formula = pos.line + deltaLine, pos.char
      */
     private static ShiftPosition(pos: vscode.Position, change: vscode.TextDocumentContentChangeEvent): vscode.Position {
         const editStart = change.range.start;
         const editEnd = change.range.end;
 
-        // end position of the inserted text (change.text may span several lines)
         const text = change.text;
+        // end position of a multiline change text 
         const lastNl = text.lastIndexOf('\n');
         const lineCount = text.split('\n').length - 1; // "abcd\n".split("\n") = 2;
         const leftOverNL = text.length - lastNl - 1; // leftOver("0123456\n12") = 2
@@ -226,13 +236,13 @@ export class Highlight {
 
         const insLine = lastNl === -1 ? editStart.line : newLine;
         const insChar = lastNl === -1 ? newChar : leftOverNL;
-        const distanceChar = pos.character - editEnd.character;
-        const distanceLine = insLine - editEnd.line;
+        const deltaChar = pos.character - editEnd.character;
+        const deltaLine = insLine - editEnd.line;
 
         if (pos.line === editEnd.line) {
-            return new vscode.Position(insLine, insChar + distanceChar);
+            return new vscode.Position(insLine, insChar + deltaChar);
         }
-        return new vscode.Position(pos.line + distanceLine, pos.character);
+        return new vscode.Position(pos.line + deltaLine, pos.character);
     }
 
     public RefreshSelectedWords(): void {
