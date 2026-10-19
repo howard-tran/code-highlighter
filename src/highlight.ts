@@ -29,7 +29,7 @@ export class Highlight {
             log.Info('ClearWords: no active editor, nothing to clear');
             return;
         }
-        const uri = editor.document.uri.toString();
+        const uri = this.KeyFor(editor.document);
         log.Info(`ClearWords: clearing highlighted words of ${uri}`);
         this.selectedByUri.delete(uri);
         this.DecorateSelectedWords();
@@ -46,7 +46,7 @@ export class Highlight {
             const t = `${sel.end.line}:${sel.end.character}`;
             log.Info(`Selected:  (${s})-(${t})`);
         });
-        const uri = editor.document.uri.toString();
+        // const uri = editor.document.uri.toString();
         const onlyOccurrence = this.config.IsOnlySelectedOccurrence();
 
         // Collect the (word, range) of every cursor in one pass.
@@ -70,7 +70,7 @@ export class Highlight {
         if (picks.length === 0) {
             return;
         }
-        log.Info(`SelectedWords: words=[${picks.map(p => p.word).join(', ')}] cursors=${picks.length} mode=${onlyOccurrence ? 'occurrence' : 'word'} file=${uri}`);
+        log.Info(`SelectedWords: words=[${picks.map(p => p.word).join(', ')}] cursors=${picks.length} mode=${onlyOccurrence ? 'occurrence' : 'word'} file=${this.KeyFor(editor.document)}`);
 
         const entries = this.EntriesFor(editor.document);
         let colorIdx: number | undefined = undefined;
@@ -159,7 +159,7 @@ export class Highlight {
         if (e.contentChanges.length === 0) {
             return;
         }
-        const entries = this.selectedByUri.get(e.document.uri.toString());
+        const entries = this.EntriesFor(e.document);
         if (!entries || entries.every(entry => entry.range === undefined)) {
             return;
         }
@@ -395,9 +395,18 @@ export class Highlight {
         this.decorators = this.config.GetDecorationTypes();
     }
 
+    /**
+     * Map key for `selectedByUri`: the path relative to the workspace folder
+     * (e.g. `Untitled-2.ini` for a file at the workspace root, no parent folder
+     * prefixed), falling back to the full path for files outside the workspace.
+     */
+    private KeyFor(document: vscode.TextDocument): string {
+        return vscode.workspace.asRelativePath(document.uri, false);
+    }
+
     /** Words highlighted in the given file, keyed by document URI. */
     private EntriesFor(document: vscode.TextDocument): HighlightEntry[] {
-        const key = document.uri.toString();
+        const key = this.KeyFor(document);
         let entries = this.selectedByUri.get(key);
         if (!entries) {
             entries = [];
