@@ -14,6 +14,7 @@ const REFRESH_TIMEOUT_MS = 50;
 interface HighlightEntry {
     word: string;
     range: vscode.Range | undefined;
+    // if colorIdx is undefined, colorIdx = index of entry
     colorIdx: number | undefined;
 }
 
@@ -77,11 +78,16 @@ export class Highlight {
 
         const entries = this.EntriesFor(editor.document);
         let colorIdx: number | undefined = undefined;
-        if (onlyOccurrence && picks.some(p => this.FindEntryByRange(entries, p.range) === -1)) {
-            // Ask the user for a color index once per command trigger, and only when at
-            // least one cursor actually adds a highlight; on cancel fall back to the first color
-            colorIdx = await this.PickColor();
+        if (onlyOccurrence) {
+            // Ask the user for a color index once per command trigger
+            // Only fired when at least in selected range do not exist in the entry list
+            if (picks.some(p => this.FindEntryByRange(entries, p.range) === -1)) {
+                colorIdx = await this.PickColor();
+            }
+        } else {
+            colorIdx = entries.length;
         }
+
         for (const { word, range } of picks) {
             this.EntryHandle(entries, word, range, colorIdx);
         }
@@ -107,10 +113,11 @@ export class Highlight {
             // find exist in words per entry
             idx = entries.findIndex(entry => entry.word === word);
             if (idx === -1) {
-                this.UpdateEntry(entries, { word: word, range: range, colorIdx: undefined });
+                this.UpdateEntry(entries, { word: word, range: range, colorIdx: colorIdx });
                 return;
             }
         }
+        // handle the else
         this.EmptyEntry(entries, idx);
     }
 
@@ -280,6 +287,8 @@ export class Highlight {
         const entries = this.EntriesFor(editor.document);
         entries.forEach((entry, idx: number) => {
             const selectedWord = entry.word;
+            const colorIdx = entry.colorIdx;
+
             if (selectedWord === '') {
                 return;
             }
@@ -288,8 +297,6 @@ export class Highlight {
             if (this.config.IsOnlySelectedOccurrence()) {
                 const range = this.ResolveRange(editor.document, selectedWord, entry.range, text.length);
                 if (range) {
-                    // Default to the first color; the index the user picked in highlight.selectedWords takes precedence
-                    const colorIdx = entry.colorIdx;
                     if (colorIdx !== undefined && colorIdx >= 0 && colorIdx < decorations.length) {
                         decorations[colorIdx].push({ range: range });
                     } else {
@@ -307,12 +314,13 @@ export class Highlight {
             let matchCount = 0;
             const regEx = new RegExp(pattern, flags);
             let execArray = regEx.exec(text);
+            const effectiveColor = colorIdx ?? idx;
             while (execArray !== null) {
                 matchCount++;
                 const startPos = editor.document.positionAt(execArray.index);
                 const endPos = editor.document.positionAt(execArray.index + execArray[0].length);
                 const decorationPos = { range: new vscode.Range(startPos, endPos) };
-                decorations[idx % decorations.length].push(decorationPos);
+                decorations[effectiveColor % decorations.length].push(decorationPos);
 
                 execArray = regEx.exec(text);
             }
@@ -322,7 +330,7 @@ export class Highlight {
         this.decorators.forEach((decorator: vscode.TextEditorDecorationType, idx: number) => {
             // log.Info(`  decorator[${idx}]: ${decorations[idx].length} range(s)`);
             if (selectionRedraw) {
-                editor.setDecorations(decorator, this.ExcludeSelectionRange(editor, decorations[idx]));
+                editor.setDecorations(decorator, this.ExcludeSelectionOffset(editor, decorations[idx]));
             } else {
                 editor.setDecorations(decorator, decorations[idx]);
             }
@@ -402,7 +410,7 @@ export class Highlight {
         this.decorators.forEach((decorator: vscode.TextEditorDecorationType, idx: number) => {
             // log.Info(`  decorator[${idx}]: ${decorations[idx].length} range(s)`);
             if (selectionRedraw) {
-                editor.setDecorations(decorator, this.ExcludeSelectionRange(editor, decorations[idx]));
+                editor.setDecorations(decorator, this.ExcludeSelectionOffset(editor, decorations[idx]));
             } else {
                 editor.setDecorations(decorator, decorations[idx]);
             }
