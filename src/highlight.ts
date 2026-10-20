@@ -3,6 +3,9 @@ import * as vscode from 'vscode';
 import {Color, Config} from './config';
 import {log} from './logger';
 
+/** Debounce delay before re-decorating after a change (ms). */
+const REFRESH_TIMEOUT_MS = 50;
+
 /**
  * One highlighted word inside one file.
  * `word` is regex-escaped; `word === ''` means the slot was deleted
@@ -239,17 +242,25 @@ export class Highlight {
         return new vscode.Position(pos.line + deltaLine, pos.character);
     }
 
-    public RefreshSelectedWords(): void {
+    /**
+     * Debounced redraw.
+     * @param selectionRedraw true (default): highlight ranges are split around the
+     *   current selections (ExcludeSelectionOffset); false: ranges are drawn as-is.
+     */
+    public RefreshSelectedWords(selectionRedraw: boolean = true): void {
         if (this.timeout) {
             clearTimeout(this.timeout);
         }
         this.timeout = setTimeout(() => {
-            this.DecorateSelectedWords();
-        }, 500);
+            this.DecorateSelectedWords(selectionRedraw);
+        }, REFRESH_TIMEOUT_MS);
     }
 
-    // For debugging
-    public DecorateSelectedWords_02(): void {
+    /**
+     * For debugging.
+     * @param selectionRedraw same meaning as in DecorateSelectedWords.
+     */
+    public DecorateSelectedWords_02(selectionRedraw: boolean = true): void {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
             return;
@@ -310,12 +321,20 @@ export class Highlight {
 
         this.decorators.forEach((decorator: vscode.TextEditorDecorationType, idx: number) => {
             // log.Info(`  decorator[${idx}]: ${decorations[idx].length} range(s)`);
-            // editor.setDecorations(decorator, this.ExcludeSelections(editor, decorations[idx]));
-            editor.setDecorations(decorator, decorations[idx]);
+            if (selectionRedraw) {
+                editor.setDecorations(decorator, this.ExcludeSelectionRange(editor, decorations[idx]));
+            } else {
+                editor.setDecorations(decorator, decorations[idx]);
+            }
         });
     }
 
-    public DecorateSelectedWords(): void {
+    /**
+     * @param selectionRedraw true (default): highlight ranges are split around the
+     *   current selections (ExcludeSelectionOffset) so they don't interfere with the
+     *   default selection color; false: ranges are drawn as-is.
+     */
+    public DecorateSelectedWords(selectionRedraw: boolean = true): void {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
             return;
@@ -382,8 +401,11 @@ export class Highlight {
 
         this.decorators.forEach((decorator: vscode.TextEditorDecorationType, idx: number) => {
             // log.Info(`  decorator[${idx}]: ${decorations[idx].length} range(s)`);
-            // editor.setDecorations(decorator, this.ExcludeSelections(editor, decorations[idx]));
-            editor.setDecorations(decorator, decorations[idx]);
+            if (selectionRedraw) {
+                editor.setDecorations(decorator, this.ExcludeSelectionRange(editor, decorations[idx]));
+            } else {
+                editor.setDecorations(decorator, decorations[idx]);
+            }
         });
     }
 
@@ -445,7 +467,7 @@ export class Highlight {
      * split around the selections it intersects, keeping only the non-empty forward
      * pieces before/between/after them.
      */
-    private ExcludeSelections(editor: vscode.TextEditor, decorations: vscode.DecorationOptions[]): vscode.DecorationOptions[] {
+    private ExcludeSelectionOffset(editor: vscode.TextEditor, decorations: vscode.DecorationOptions[]): vscode.DecorationOptions[] {
         const document = editor.document;
         // Empty selections are just a caret; they never cover any text, so skip them
         const excluded = editor.selections
@@ -487,6 +509,39 @@ export class Highlight {
             }
         }
         return result;
+    }
+
+    /**
+     * Same goal as ExcludeSelectionOffset, but implemented by splitting the range
+     * around each intersecting selection: [sel.end -> range.end] and
+     * [range.start -> sel.start]. A piece that would be backward (the selection
+     * covers or extends past that side) is skipped instead of being pushed.
+     */
+    private ExcludeSelectionRange(editor: vscode.TextEditor, decorations: vscode.DecorationOptions[]): vscode.DecorationOptions[] {
+        const result: vscode.DecorationOptions[] = [];
+        for (const decoration of decorations) {
+            const range = decoration.range;
+            let split = false;
+            editor.selections.forEach((sel) => {
+                if (this.IsIntersect(range, sel)) {
+                    split = true;
+                    if (sel.end.isBefore(range.end)) {
+                        result.push({ ...decoration, range: new vscode.Range(sel.end, range.end) });
+                    }
+                    if (range.start.isBefore(sel.start)) {
+                        result.push({ ...decoration, range: new vscode.Range(range.start, sel.start) });
+                    }
+                }
+            });
+            if (!split) {
+                result.push(decoration);
+            }
+        }
+        return result;
+    }
+
+    private IsIntersect(range1: vscode.Range, range2: vscode.Range): boolean {
+        return range1.start.isBeforeOrEqual(range2.end) && range2.start.isBeforeOrEqual(range1.end);
     }
 
     // textLength is passed in by the caller (which already has text) to avoid getText() copying the whole document every call

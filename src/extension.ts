@@ -53,7 +53,7 @@ export function activate(context: vscode.ExtensionContext) {
 		if (!activeDocument || e.document !== activeDocument) return;
 		
 		highlight.UpdateRanges(e);
-		highlight.RefreshSelectedWords();
+		highlight.RefreshSelectedWords(false);
 
 		if (e.contentChanges.length <= 0) return;
 
@@ -72,14 +72,14 @@ export function activate(context: vscode.ExtensionContext) {
 
 	});
 
-	// vscode.window.onDidChangeActiveTextEditor(_ => {
-	// 	// log.Info(`onDidChangeActiveTextEditor: ${editor ? editor.document.uri.toString() : '<none>'}`);
-	// 	highlight.RefreshSelectedWords();
-	// });
+	vscode.window.onDidChangeActiveTextEditor(_ => {
+		// log.Info(`onDidChangeActiveTextEditor: ${editor ? editor.document.uri.toString() : '<none>'}`);
+		highlight.RefreshSelectedWords(false);
+	});
 
 	vscode.window.onDidChangeTextEditorSelection(_ => {
 		// e.textEditor, e.selections, e.kind
-		highlight.RefreshSelectedWords();
+		highlight.RefreshSelectedWords(true);
 		// updateDecorations(e.textEditor); // re-apply highlight so it skips selected ranges
 	});
 
