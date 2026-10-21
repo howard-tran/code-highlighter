@@ -32,6 +32,14 @@
 			{
 				"command": "highlight.showLog",
 				"title": "%command.showLog.title%"
+			},
+			{
+				"command": "highlight.toggleHighlight",
+				"title": "%command.toggleHighlight.title%"
+			},
+			{
+				"command": "highlight.toggleOnlySelectedOccurrence",
+				"title": "%command.toggleOnlySelectedOccurrence.title%"
 			}
 		],
 		"keybindings": [
@@ -42,6 +50,10 @@
 			{
 				"command": "highlight.clearWords",
 				"key": "ctrl+shift+f8"
+			},
+			{
+				"command": "highlight.toggleHighlight",
+				"key": "ctrl+alt+f8"
 			}
 		],
 		"configuration": [
@@ -77,6 +89,11 @@
 						"type": "boolean",
 						"default": true,
 						"description": "%config.debug.description%"
+					},
+					"highlight.configuration.disableHighlight": {
+						"type": "boolean",
+						"default": false,
+						"description": "%config.disableHighlight.description%"
 					},
 					"highlight.configuration.colors": {
 						"type": "array",

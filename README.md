@@ -12,6 +12,10 @@ This extension highlights selected words.
 
     ![Supports clearing all highlighted words](./resource/highlight_remove_all.gif)
 
+-   Supports toggling highlighting on/off without losing the highlighted words (ctrl+alt+F8)
+
+-   Supports toggling "only selected occurrence" mode (command: Highlight: Toggle Only Selected Occurrence)
+
 ## Extension Settings
 
 *   `highlight.configuration.wholeWord`: Whether to highlight whole words only. (boolean, default: `true`)
@@ -20,6 +24,7 @@ This extension highlights selected words.
 *   `highlight.configuration.borderRadius`: Border radius of the highlight. (string, default: `"5px"`)
 *   `highlight.configuration.onlySelectedOccurrence`: Highlight only the occurrence you selected instead of every match in the document. (boolean, default: `false`)
 *   `highlight.configuration.colors`: Colors used for highlighting. (array)
+*   `highlight.configuration.disableHighlight`: Turn highlighting off without losing the highlighted words. (boolean, default: `false`)
 
 ## Known Issues
 

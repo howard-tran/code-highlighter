@@ -33,6 +33,28 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 	context.subscriptions.push(disposable);
 
+	disposable = vscode.commands.registerCommand('highlight.toggleHighlight', async () => {
+		log.Info('command: highlight.toggleHighlight');
+		try {
+			await highlight.ToggleHighlight();
+		} catch (e) {
+			log.Exception('highlight.toggleHighlight failed', e);
+			throw e;
+		}
+	});
+	context.subscriptions.push(disposable);
+
+	disposable = vscode.commands.registerCommand('highlight.toggleOnlySelectedOccurrence', async () => {
+		log.Info('command: highlight.toggleOnlySelectedOccurrence');
+		try {
+			await highlight.ToggleOnlySelectedOccurrence();
+		} catch (e) {
+			log.Exception('highlight.toggleOnlySelectedOccurrence failed', e);
+			throw e;
+		}
+	});
+	context.subscriptions.push(disposable);
+
 	disposable = vscode.commands.registerCommand('highlight.showLog', () => {
 		const filePath = log.GetFilePath();
 		vscode.window.showInformationMessage(`Highlight log file: ${filePath}`);

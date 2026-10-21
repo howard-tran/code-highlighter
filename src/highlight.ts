@@ -16,6 +16,7 @@ interface HighlightEntry {
     range: vscode.Range | undefined;
     // if colorIdx is undefined, colorIdx = index of entry
     colorIdx: number | undefined;
+    mode: number; // 1 = highlight only selected, 2 = highlight search
 }
 
 export class Highlight {
@@ -45,6 +46,11 @@ export class Highlight {
             return;
         }
         // HERE
+        if (this.config.IsHighlightDisabled()) {
+            log.Info('SelectedWords: highlighting is disabled, enable it with highlight.toggleHighlight');
+            vscode.window.showInformationMessage('Highlight: highlighting is disabled, run "Highlight: Toggle Highlighting" to enable it');
+            return;
+        }
         editor.selections.forEach((sel) => {
             const s = `${sel.start.line}:${sel.start.character}`;
             const t = `${sel.end.line}:${sel.end.character}`;
@@ -94,6 +100,57 @@ export class Highlight {
 
         this.DecorateSelectedWords();
         // this.DecorateSelectedWords_02();
+    }
+
+    /**
+     * Flip a boolean `highlight.configuration.*` setting. The effective value comes from the
+     * most specific target that defines it (workspace folder > workspace > global), so the
+     * new value is written back to that same target, otherwise it would be ignored.
+     * @returns the new value of the setting.
+     */
+    private async ToggleSetting(key: string): Promise<boolean> {
+        const section = vscode.workspace.getConfiguration('highlight');
+        const inspect = section.inspect<boolean>(key);
+        const value = !(inspect?.workspaceFolderValue ?? inspect?.workspaceValue ??
+            inspect?.globalValue ?? inspect?.defaultValue ?? false);
+        const target = inspect?.workspaceFolderValue !== undefined ? vscode.ConfigurationTarget.WorkspaceFolder
+            : inspect?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace
+                : vscode.ConfigurationTarget.Global;
+
+        log.Info(`ToggleSetting: highlight.${key}=${value} target=${vscode.ConfigurationTarget[target]}`);
+        await section.update(key, value, target);
+        return value;
+    }
+
+    /**
+     * Turn highlighting on/off by flipping the persisted `highlight.configuration.disableHighlight`
+     * setting. The setting change is picked up by onDidChangeConfiguration, which reloads the
+     * config: disposing the decoration types clears what is on screen while disabled, and
+     * redrawing restores the highlighted words when re-enabled (the words themselves are kept,
+     * see UpdateConfig).
+     * @returns true when highlighting is now disabled.
+     */
+    public async ToggleHighlight(): Promise<boolean> {
+        const disabled = await this.ToggleSetting('configuration.disableHighlight');
+        vscode.window.showInformationMessage(disabled
+            ? 'Highlight: highlighting disabled'
+            : 'Highlight: highlighting enabled');
+        return disabled;
+    }
+
+    /**
+     * Switch between highlighting every match in the document and highlighting only the
+     * occurrence you selected, by flipping `highlight.configuration.onlySelectedOccurrence`;
+     * the redraw is done by the configuration-change handler.
+     * @returns true when only-selected-occurrence mode is now on.
+     */
+    public async ToggleOnlySelectedOccurrence(): Promise<boolean> {
+        const onlyOccurrence = await this.ToggleSetting('configuration.onlySelectedOccurrence');
+        log.Info(`ToggleOnlySelectedOccurrence: onlySelectedOccurrence=${onlyOccurrence}`);
+        vscode.window.showInformationMessage(onlyOccurrence
+            ? 'Highlight: now highlighting only the selected occurrence'
+            : 'Highlight: now highlighting every match in the document');
+        return onlyOccurrence;
     }
 
     /**
@@ -272,7 +329,8 @@ export class Highlight {
         if (!editor) {
             return;
         }
-        if (this.decorators.length === 0) {
+        // nothing is drawn while highlighting is disabled
+        if (this.decorators.length === 0 || this.config.IsHighlightDisabled()) {
             return;
         }
 
@@ -295,7 +353,10 @@ export class Highlight {
 
             // Highlight only the originally selected occurrence
             if (this.config.IsOnlySelectedOccurrence()) {
+                // Not need since we have UpdateRanges
+                // But just to make sure... the clamp do not cost much performance
                 const range = this.ResolveRange(editor.document, selectedWord, entry.range, text.length);
+                // const range = entry.range;
                 if (range) {
                     if (colorIdx !== undefined && colorIdx >= 0 && colorIdx < decorations.length) {
                         decorations[colorIdx].push({ range: range });
@@ -347,7 +408,8 @@ export class Highlight {
         if (!editor) {
             return;
         }
-        if (this.decorators.length === 0) {
+        // nothing is drawn while highlighting is disabled
+        if (this.decorators.length === 0 || this.config.IsHighlightDisabled()) {
             return;
         }
 
@@ -374,7 +436,10 @@ export class Highlight {
 
             // Highlight only the originally selected occurrence
             if (this.config.IsOnlySelectedOccurrence()) {
+                // Not need since we have UpdateRanges
+                // But just to make sure... the clamp do not cost much performance
                 const range = this.ResolveRange(editor.document, selectedWord, entry.range, text.length);
+                // const range = entry.range;
                 if (range) {
                     // Default to the first color; the index the user picked in highlight.selectedWords takes precedence
                     const colorIdx = entry.colorIdx;
@@ -419,7 +484,7 @@ export class Highlight {
 
     public UpdateConfig(): void {
         log.Info(`UpdateConfig: disposing ${this.decorators.length} decorator(s), reloading config`);
-        this.selectedByUri.clear();
+        // this.selectedByUri.clear();
         this.decorators.forEach(decorator => decorator.dispose());
         this.config = new Config();
         this.decorators = this.config.GetDecorationTypes();

@@ -4,6 +4,8 @@
 	"command.highlightSelectedWords.title": "高亮/取消高亮选中的单词",
 	"command.clearHighlightWords.title": "清除所有高亮单词",
 	"command.showLog.title": "高亮：查看调试日志文件",
+	"command.toggleHighlight.title": "高亮：开关高亮功能",
+	"command.toggleOnlySelectedOccurrence.title": "高亮：切换只高亮选中处",
 	"config.title": "高亮配置",
 	"config.wholeWord.description": "是否只高亮整个单词。",
 	"config.ignoreCase.description": "高亮时是否忽略大小写。",
@@ -11,5 +13,6 @@
 	"config.bold.description": "高亮文本是否加粗。",
 	"config.onlySelectedOccurrence.description": "只高亮选中的那一处，而不是文档中的所有匹配项。",
 	"config.borderRadius.description": "高亮部分的圆角边框。",
-	"config.debug.description": "将调试信息记录到文件（文件路径见输出面板 > Highlight）。"
+	"config.debug.description": "将调试信息记录到文件（文件路径见输出面板 > Highlight）。",
+	"config.disableHighlight.description": "关闭高亮显示（不会丢失已高亮的单词，可通过“高亮：开关高亮功能”命令切换）。"
 }

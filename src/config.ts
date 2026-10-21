@@ -27,6 +27,10 @@ export class Config {
         const onlyOccurrenceConfig = config.get<boolean>('highlight.configuration.onlySelectedOccurrence');
         this.onlySelectedOccurrence = onlyOccurrenceConfig === undefined ? false : onlyOccurrenceConfig;
 
+        // when true nothing is drawn; flipped by the highlight.toggleHighlight command
+        const disableConfig = config.get<boolean>('highlight.configuration.disableHighlight');
+        this.disableHighlight = disableConfig === undefined ? false : disableConfig;
+
         // 获取所有颜色
         this.decorationTypes = [];
         const colors = config.get<Color[]>('highlight.configuration.colors');
@@ -56,7 +60,7 @@ export class Config {
 
         log.Info(`Config loaded: wholeWord=${this.wholeWord} ignoreCase=${this.ignoreCase} ` +
             `bold=${this.isBold} borderRadius=${this.borderRadius} ` +
-            `onlySelectedOccurrence=${this.onlySelectedOccurrence} colors=${this.decorationTypes.length}`);
+            `onlySelectedOccurrence=${this.onlySelectedOccurrence} disableHighlight=${this.disableHighlight} colors=${this.decorationTypes.length}`);
     }
 
     public IsIgnoreCase(): boolean {
@@ -69,6 +73,11 @@ export class Config {
 
     public IsOnlySelectedOccurrence(): boolean {
         return this.onlySelectedOccurrence;
+    }
+
+    /** Highlighting is off (`highlight.configuration.disableHighlight`). */
+    public IsHighlightDisabled(): boolean {
+        return this.disableHighlight;
     }
 
     public GetDecorationTypes(): vscode.TextEditorDecorationType[] {
@@ -85,6 +94,7 @@ export class Config {
     private isBold: boolean;
     private borderRadius: string;
     private onlySelectedOccurrence: boolean;
+    private disableHighlight: boolean;
     private decorationTypes: vscode.TextEditorDecorationType[];
     private colors: Color[];
 }
