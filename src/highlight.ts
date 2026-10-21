@@ -6,6 +6,11 @@ import {log} from './logger';
 /** Debounce delay before re-decorating after a change (ms). */
 const REFRESH_TIMEOUT_MS = 50;
 
+/** Highlight only the selected occurrence (entry keyed by its range). */
+const MODE_ONLY_SELECTED_OCCURRENCE = 1;
+/** Highlight every match of the word in the document (entry keyed by its word). */
+const MODE_ALL_MATCHES = 2;
+
 /**
  * One highlighted word inside one file.
  * `word` is regex-escaped; `word === ''` means the slot was deleted
@@ -16,7 +21,17 @@ interface HighlightEntry {
     range: vscode.Range | undefined;
     // if colorIdx is undefined, colorIdx = index of entry
     colorIdx: number | undefined;
-    mode: number; // 1 = highlight only selected, 2 = highlight search
+    mode: number; // MODE_ONLY_SELECTED_OCCURRENCE or MODE_ALL_MATCHES
+}
+
+/**
+ * An entry together with its index inside the file's entry list.
+ * The index is kept as the fallback color index for MODE_ALL_MATCHES entries
+ * (empty slots are skipped but still consume their index, so colors don't shift).
+ */
+interface IndexedEntry {
+    entry: HighlightEntry;
+    idx: number;
 }
 
 export class Highlight {
@@ -63,7 +78,7 @@ export class Highlight {
         // - occurrence mode: one pick per cursor (keyed by range), so several cursors on
         //   the same word highlight several occurrences;
         // - word mode: deduped by word, so a word picked by many cursors toggles only once.
-        const picks: { word: string; range: vscode.Selection }[] = [];
+        const picks: { word: string; range: vscode.Selection; mode: number }[] = [];
         const seenWords = new Set<string>();
         for (const sel of editor.selections) {
             const word = this.GetSelectedWord(editor.document, sel);
@@ -71,10 +86,10 @@ export class Highlight {
                 continue;
             }
             if (onlyOccurrence) {
-                picks.push({ word, range: sel });
+                picks.push({ word, range: sel, mode: MODE_ONLY_SELECTED_OCCURRENCE });
             } else if (!seenWords.has(word)) {
                 seenWords.add(word);
-                picks.push({ word, range: sel });
+                picks.push({ word, range: sel, mode: MODE_ALL_MATCHES });
             }
         }
         if (picks.length === 0) {
@@ -94,8 +109,8 @@ export class Highlight {
             colorIdx = entries.length;
         }
 
-        for (const { word, range } of picks) {
-            this.EntryHandle(entries, word, range, colorIdx);
+        for (const { word, range, mode } of picks) {
+            this.EntryHandle(entries, word, range, colorIdx, mode);
         }
 
         this.DecorateSelectedWords();
@@ -157,20 +172,20 @@ export class Highlight {
      * Toggle one (word, range) pick: add it when it is not highlighted yet,
      * empty its slot otherwise (see EmptyEntry for why slots are kept).
      */
-    private EntryHandle(entries: HighlightEntry[], word: string, range: vscode.Range, colorIdx: number | undefined): void {
+    private EntryHandle(entries: HighlightEntry[], word: string, range: vscode.Range, colorIdx: number | undefined, mode: number): void {
         let idx: number;
-        if (this.config.IsOnlySelectedOccurrence()) {
+        if (mode === MODE_ONLY_SELECTED_OCCURRENCE) {
             // One highlight per cursor: entries are keyed by their original range
             idx = this.FindEntryByRange(entries, range);
             if (idx === -1) {
-                this.UpdateEntry(entries, { word: word, range: range, colorIdx: colorIdx });
+                this.UpdateEntry(entries, { word: word, range: range, colorIdx: colorIdx, mode: mode });
                 return;
             }
         } else {
             // find exist in words per entry
             idx = entries.findIndex(entry => entry.word === word);
             if (idx === -1) {
-                this.UpdateEntry(entries, { word: word, range: range, colorIdx: colorIdx });
+                this.UpdateEntry(entries, { word: word, range: range, colorIdx: colorIdx, mode: mode });
                 return;
             }
         }
@@ -196,7 +211,7 @@ export class Highlight {
      * - otherwise: a slot is reusable when its word was emptied ('').
      */
     private UpdateEntry(entries: HighlightEntry[], entry: HighlightEntry): void {
-        const idx = this.config.IsOnlySelectedOccurrence()
+        const idx = entry.mode === MODE_ONLY_SELECTED_OCCURRENCE
             ? entries.findIndex(e => e.range === undefined || e.range.start.isEqual(e.range.end))
             : entries.findIndex(e => e.word === '');
         if (idx === -1) {
@@ -321,6 +336,79 @@ export class Highlight {
     }
 
     /**
+     * Entries of the given file that the current `highlight.configuration.onlySelectedOccurrence`
+     * setting decides to draw: non-empty words whose own mode matches it, paired with their
+     * index in the entry list (kept as the fallback color index, see IndexedEntry).
+     * Entries of the other mode are skipped so nothing leaks in from the other setting.
+     */
+    private DecorableEntries(document: vscode.TextDocument): IndexedEntry[] {
+        const mode = this.config.IsOnlySelectedOccurrence()
+            ? MODE_ONLY_SELECTED_OCCURRENCE
+            : MODE_ALL_MATCHES;
+        return this.EntriesFor(document)
+            .map((entry, idx) => ({ entry, idx }))
+            .filter(({ entry }) => entry.word !== '' && entry.mode === mode);
+    }
+
+    /**
+     * Fill `decorations` for MODE_ONLY_SELECTED_OCCURRENCE entries: the stored range *is*
+     * the identity of the highlight, so it is drawn directly. ResolveRange only recovers it
+     * when later edits shifted the positions (Not needed since we have UpdateRanges, but the
+     * clamp does not cost much performance).
+     */
+    private DecorateOnlySelectedOccurrences(
+        editor: vscode.TextEditor,
+        entries: IndexedEntry[],
+        decorations: vscode.DecorationOptions[][],
+        text: string): void {
+        for (const { entry } of entries) {
+            const range = this.ResolveRange(editor.document, entry.word, entry.range, text.length);
+            if (!range) {
+                continue;
+            }
+            // Default to the first color; the index the user picked in highlight.selectedWords takes precedence
+            const colorIdx = entry.colorIdx;
+            const color = colorIdx !== undefined && colorIdx >= 0 && colorIdx < decorations.length
+                ? colorIdx
+                : 0;
+            decorations[color].push({ range: range });
+        }
+    }
+
+    /**
+     * Fill `decorations` for MODE_ALL_MATCHES entries: every occurrence of the word in the
+     * document is decorated.
+     * @param preferEntryColor true (DecorateSelectedWords_02): use the entry's picked color
+     *   when set, falling back to the entry index; false (DecorateSelectedWords): always the
+     *   entry index.
+     */
+    private DecorateAllMatches(
+        editor: vscode.TextEditor,
+        entries: IndexedEntry[],
+        decorations: vscode.DecorationOptions[][],
+        text: string,
+        preferEntryColor: boolean = false): void {
+        const flags = this.config.IsIgnoreCase() ? 'giu' : 'gu';
+        for (const { entry, idx } of entries) {
+            // \b is based on ASCII \w, so non-ASCII letters (e.g. Vietnamese Đ) are not word characters and \bĐảng\b would fail; use Unicode-aware lookaround instead
+            const pattern = this.config.IsWholeWord()
+                ? '(?<![\\p{L}\\p{N}_])' + entry.word + '(?![\\p{L}\\p{N}_])'
+                : entry.word;
+            const color = preferEntryColor ? (entry.colorIdx ?? idx) : idx;
+
+            const regEx = new RegExp(pattern, flags);
+            let execArray = regEx.exec(text);
+            while (execArray !== null) {
+                const startPos = editor.document.positionAt(execArray.index);
+                const endPos = editor.document.positionAt(execArray.index + execArray[0].length);
+                decorations[color % decorations.length].push({ range: new vscode.Range(startPos, endPos) });
+
+                execArray = regEx.exec(text);
+            }
+        }
+    }
+
+    /**
      * For debugging.
      * @param selectionRedraw same meaning as in DecorateSelectedWords.
      */
@@ -341,52 +429,13 @@ export class Highlight {
         });
 
         const text = editor.document.getText();
-        const flags = this.config.IsIgnoreCase() ? 'giu' : 'gu';
-        const entries = this.EntriesFor(editor.document);
-        entries.forEach((entry, idx: number) => {
-            const selectedWord = entry.word;
-            const colorIdx = entry.colorIdx;
-
-            if (selectedWord === '') {
-                return;
-            }
-
-            // Highlight only the originally selected occurrence
-            if (this.config.IsOnlySelectedOccurrence()) {
-                // Not need since we have UpdateRanges
-                // But just to make sure... the clamp do not cost much performance
-                const range = this.ResolveRange(editor.document, selectedWord, entry.range, text.length);
-                // const range = entry.range;
-                if (range) {
-                    if (colorIdx !== undefined && colorIdx >= 0 && colorIdx < decorations.length) {
-                        decorations[colorIdx].push({ range: range });
-                    } else {
-                        decorations[0].push({ range: range });
-                    }
-                }
-                return;
-            }
-
-            // \b is based on ASCII \w, so non-ASCII letters (e.g. Vietnamese Đ) are not word characters and \bĐảng\b would fail; use Unicode-aware lookaround instead
-            const pattern = this.config.IsWholeWord()
-                ? '(?<![\\p{L}\\p{N}_])' + selectedWord + '(?![\\p{L}\\p{N}_])'
-                : selectedWord;
-
-            let matchCount = 0;
-            const regEx = new RegExp(pattern, flags);
-            let execArray = regEx.exec(text);
-            const effectiveColor = colorIdx ?? idx;
-            while (execArray !== null) {
-                matchCount++;
-                const startPos = editor.document.positionAt(execArray.index);
-                const endPos = editor.document.positionAt(execArray.index + execArray[0].length);
-                const decorationPos = { range: new vscode.Range(startPos, endPos) };
-                decorations[effectiveColor % decorations.length].push(decorationPos);
-
-                execArray = regEx.exec(text);
-            }
-            // log.Info(`  "${selectedWord}" -> pattern="${pattern}" flags=${flags}, ${matchCount} match(es)`);
-        });
+        const entries = this.DecorableEntries(editor.document);
+        if (this.config.IsOnlySelectedOccurrence()) {
+            this.DecorateOnlySelectedOccurrences(editor, entries, decorations, text);
+        } else {
+            // _02 prefers the color picked by the user over the entry index
+            this.DecorateAllMatches(editor, entries, decorations, text, true);
+        }
 
         this.decorators.forEach((decorator: vscode.TextEditorDecorationType, idx: number) => {
             // log.Info(`  decorator[${idx}]: ${decorations[idx].length} range(s)`);
@@ -420,57 +469,16 @@ export class Highlight {
         });
 
         const text = editor.document.getText();
-        const flags = this.config.IsIgnoreCase() ? 'giu' : 'gu';
-        // Only the words highlighted in *this* file are decorated; every decorator is
-        // overwritten below, so words of other files never leak into this editor.
-        const entries = this.EntriesFor(editor.document);
+        const entries = this.DecorableEntries(editor.document);
         // log.Info(`DecorateSelectedWords: file=${editor.document.uri.toString()} ` +
-        //     `words=[${entries.filter(e => e.word !== '').map(e => e.word).join(', ')}] ` +
+        //     `words=[${entries.map(e => e.entry.word).join(', ')}] ` +
         //     `wholeWord=${this.config.IsWholeWord()} ignoreCase=${this.config.IsIgnoreCase()} ` +
         //     `onlyOccurrence=${this.config.IsOnlySelectedOccurrence()} decorators=${this.decorators.length}`);
-        entries.forEach((entry, idx: number) => {
-            const selectedWord = entry.word;
-            if (selectedWord === '') {
-                return;
-            }
-
-            // Highlight only the originally selected occurrence
-            if (this.config.IsOnlySelectedOccurrence()) {
-                // Not need since we have UpdateRanges
-                // But just to make sure... the clamp do not cost much performance
-                const range = this.ResolveRange(editor.document, selectedWord, entry.range, text.length);
-                // const range = entry.range;
-                if (range) {
-                    // Default to the first color; the index the user picked in highlight.selectedWords takes precedence
-                    const colorIdx = entry.colorIdx;
-                    if (colorIdx !== undefined && colorIdx >= 0 && colorIdx < decorations.length) {
-                        decorations[colorIdx].push({ range: range });
-                    } else {
-                        decorations[0].push({ range: range });
-                    }
-                }
-                return;
-            }
-
-            // \b is based on ASCII \w, so non-ASCII letters (e.g. Vietnamese Đ) are not word characters and \bĐảng\b would fail; use Unicode-aware lookaround instead
-            const pattern = this.config.IsWholeWord()
-                ? '(?<![\\p{L}\\p{N}_])' + selectedWord + '(?![\\p{L}\\p{N}_])'
-                : selectedWord;
-
-            let matchCount = 0;
-            const regEx = new RegExp(pattern, flags);
-            let execArray = regEx.exec(text);
-            while (execArray !== null) {
-                matchCount++;
-                const startPos = editor.document.positionAt(execArray.index);
-                const endPos = editor.document.positionAt(execArray.index + execArray[0].length);
-                const decorationPos = { range: new vscode.Range(startPos, endPos) };
-                decorations[idx % decorations.length].push(decorationPos);
-
-                execArray = regEx.exec(text);
-            }
-            // log.Info(`  "${selectedWord}" -> pattern="${pattern}" flags=${flags}, ${matchCount} match(es)`);
-        });
+        if (this.config.IsOnlySelectedOccurrence()) {
+            this.DecorateOnlySelectedOccurrences(editor, entries, decorations, text);
+        } else {
+            this.DecorateAllMatches(editor, entries, decorations, text);
+        }
 
         this.decorators.forEach((decorator: vscode.TextEditorDecorationType, idx: number) => {
             // log.Info(`  decorator[${idx}]: ${decorations[idx].length} range(s)`);
