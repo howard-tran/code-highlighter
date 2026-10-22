@@ -55,6 +55,28 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 	context.subscriptions.push(disposable);
 
+	disposable = vscode.commands.registerCommand('highlight.saveHighlights', async () => {
+		log.Info('command: highlight.saveHighlights');
+		try {
+			await highlight.SaveHighlights();
+		} catch (e) {
+			log.Exception('highlight.saveHighlights failed', e);
+			throw e;
+		}
+	});
+	context.subscriptions.push(disposable);
+
+	disposable = vscode.commands.registerCommand('highlight.loadHighlights', async () => {
+		log.Info('command: highlight.loadHighlights');
+		try {
+			await highlight.LoadHighlights();
+		} catch (e) {
+			log.Exception('highlight.loadHighlights failed', e);
+			throw e;
+		}
+	});
+	context.subscriptions.push(disposable);
+
 	disposable = vscode.commands.registerCommand('highlight.showLog', () => {
 		const filePath = log.GetFilePath();
 		vscode.window.showInformationMessage(`Highlight log file: ${filePath}`);

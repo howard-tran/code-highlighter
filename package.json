@@ -40,6 +40,14 @@
 			{
 				"command": "highlight.toggleOnlySelectedOccurrence",
 				"title": "%command.toggleOnlySelectedOccurrence.title%"
+			},
+			{
+				"command": "highlight.saveHighlights",
+				"title": "%command.saveHighlights.title%"
+			},
+			{
+				"command": "highlight.loadHighlights",
+				"title": "%command.loadHighlights.title%"
 			}
 		],
 		"keybindings": [

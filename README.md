@@ -16,6 +16,9 @@ This extension highlights selected words.
 
 -   Supports toggling "only selected occurrence" mode (command: Highlight: Toggle Only Selected Occurrence)
 
+-   Supports saving the highlighted words to `.vscode/highlight.words.json` and reloading them later
+    (commands: Highlight: Save Highlighted Words to File / Highlight: Load Highlighted Words from File)
+
 ## Extension Settings
 
 *   `highlight.configuration.wholeWord`: Whether to highlight whole words only. (boolean, default: `true`)

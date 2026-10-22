@@ -34,6 +34,41 @@ interface IndexedEntry {
     idx: number;
 }
 
+/** File name under `.vscode/` where the highlighted words are persisted. */
+const HIGHLIGHTS_FILE = 'highlight.json';
+/** Format version written by SaveHighlights. */
+const HIGHLIGHTS_FILE_VERSION = 1;
+
+/** JSON shape of one position (0-based). */
+interface SavedPosition {
+    line: number;
+    character: number;
+}
+
+/** JSON shape of one range. */
+interface SavedRange {
+    start: SavedPosition;
+    end: SavedPosition;
+}
+
+/**
+ * JSON shape of one HighlightEntry. Empty slots (word === '') are written as well: they
+ * still consume their index, which is the fallback color for MODE_ALL_MATCHES entries.
+ */
+interface SavedEntry {
+    word: string;
+    range: SavedRange | null;
+    colorIdx: number | null;
+    mode: number;
+}
+
+/** JSON shape of the whole highlights file written by SaveHighlights. */
+interface SavedHighlights {
+    version: number;
+    savedAt?: string;
+    files: { [relativePath: string]: SavedEntry[] };
+}
+
 export class Highlight {
 
     constructor() {
@@ -82,14 +117,17 @@ export class Highlight {
         const seenWords = new Set<string>();
         for (const sel of editor.selections) {
             const word = this.GetSelectedWord(editor.document, sel);
+            const trimmedWord = word.trim();
             if (word === "") {
                 continue;
             }
+            if (trimmedWord === "" && onlyOccurrence) continue;
+
             if (onlyOccurrence) {
                 picks.push({ word, range: sel, mode: MODE_ONLY_SELECTED_OCCURRENCE });
-            } else if (!seenWords.has(word)) {
-                seenWords.add(word);
-                picks.push({ word, range: sel, mode: MODE_ALL_MATCHES });
+            } else if (!seenWords.has(trimmedWord)) {
+                seenWords.add(trimmedWord);
+                picks.push({ word: trimmedWord, range: sel, mode: MODE_ALL_MATCHES });
             }
         }
         if (picks.length === 0) {
@@ -169,21 +207,181 @@ export class Highlight {
     }
 
     /**
+     * `selectedByUri` -> `.vscode/highlight.words.json` under the workspace root, so the
+     * highlighted words (word, mode, color, occurrence range, and the empty slots that keep
+     * the color indexes stable) survive a restart and can be restored with LoadHighlights.
+     */
+    public async SaveHighlights(): Promise<void> {
+        const location = this.HighlightsFile();
+        if (!location) {
+            vscode.window.showWarningMessage('Highlight: no workspace folder open, nothing to save to .vscode/');
+            return;
+        }
+
+        const files: { [relativePath: string]: SavedEntry[] } = {};
+        let slotCount = 0;
+        let wordCount = 0;
+        for (const [key, entries] of this.selectedByUri) {
+            files[key] = entries.map(entry => Highlight.ToSavedEntry(entry));
+            slotCount += entries.length;
+            wordCount += entries.filter(entry => entry.word !== '').length;
+        }
+        const data: SavedHighlights = {
+            version: HIGHLIGHTS_FILE_VERSION,
+            savedAt: new Date().toISOString(),
+            files: files
+        };
+
+        // .vscode may not exist yet in a fresh workspace
+        await vscode.workspace.fs.createDirectory(location.dir);
+        await vscode.workspace.fs.writeFile(location.file, Buffer.from(JSON.stringify(data, null, 2)));
+
+        const shown = vscode.workspace.asRelativePath(location.file);
+        log.Info(`SaveHighlights: ${wordCount} word(s) in ${slotCount} slot(s) across ${this.selectedByUri.size} file(s) -> ${shown}`);
+        vscode.window.showInformationMessage(`Highlight: saved ${wordCount} highlighted word(s) to ${shown}`);
+    }
+
+    /**
+     * Replace the in-memory `selectedByUri` with what `.vscode/highlight.words.json` holds
+     * and redraw the active editor (a reload, not a merge: whatever is highlighted now is
+     * dropped). Nothing happens when the file does not exist or cannot be parsed.
+     */
+    public async LoadHighlights(): Promise<void> {
+        const location = this.HighlightsFile();
+        if (!location) {
+            vscode.window.showWarningMessage('Highlight: no workspace folder open, cannot read .vscode/highlight.words.json');
+            return;
+        }
+        const shown = vscode.workspace.asRelativePath(location.file);
+
+        let content: string;
+        try {
+            content = Buffer.from(await vscode.workspace.fs.readFile(location.file)).toString('utf8');
+        } catch (e) {
+            log.Info(`LoadHighlights: cannot read ${shown}: ${e}`);
+            vscode.window.showWarningMessage(`Highlight: no highlights file to reload yet, save one first (${shown})`);
+            return;
+        }
+
+        let parsed: SavedHighlights;
+        try {
+            parsed = JSON.parse(content) as SavedHighlights;
+        } catch (e) {
+            log.Exception(`LoadHighlights: ${shown} is not valid JSON`, e);
+            vscode.window.showErrorMessage(`Highlight: ${shown} is not valid JSON, highlights were not reloaded`);
+            return;
+        }
+        if (typeof parsed !== 'object' || parsed === null ||
+            typeof parsed.files !== 'object' || parsed.files === null) {
+            log.Info(`LoadHighlights: ${shown} has no "files" object, highlights were not reloaded`);
+            vscode.window.showErrorMessage(`Highlight: ${shown} has no "files" object, highlights were not reloaded`);
+            return;
+        }
+
+        const map = new Map<string, HighlightEntry[]>();
+        let slotCount = 0;
+        for (const key of Object.keys(parsed.files)) {
+            const list = parsed.files[key];
+            if (!Array.isArray(list)) {
+                log.Info(`LoadHighlights: skipping "${key}", not an array`);
+                continue;
+            }
+            // bad items become empty slots so the remaining indexes (colors) don't shift
+            map.set(key, list.map(item => Highlight.FromSavedEntry(item)));
+            slotCount += list.length;
+        }
+
+        this.selectedByUri = map;
+        this.DecorateSelectedWords();
+
+        const wordCount = [...map.values()]
+            .reduce((sum, entries) => sum + entries.filter(entry => entry.word !== '').length, 0);
+        log.Info(`LoadHighlights: ${wordCount} word(s) in ${slotCount} slot(s) across ${map.size} file(s) from ${shown}`);
+        vscode.window.showInformationMessage(`Highlight: loaded ${wordCount} highlighted word(s) from ${shown}`);
+    }
+
+    /**
+     * `.vscode/highlight.words.json` under the first workspace folder.
+     * Returns undefined when no folder is open (there is no .vscode to point at).
+     */
+    private HighlightsFile(): { dir: vscode.Uri; file: vscode.Uri } | undefined {
+        const folder = vscode.workspace.workspaceFolders?.[0];
+        if (!folder) {
+            log.Info('HighlightsFile: no workspace folder open');
+            return undefined;
+        }
+        const dir = vscode.Uri.joinPath(folder.uri, '.vscode');
+        return { dir: dir, file: vscode.Uri.joinPath(dir, HIGHLIGHTS_FILE) };
+    }
+
+    private static ToSavedEntry(entry: HighlightEntry): SavedEntry {
+        return {
+            word: entry.word,
+            range: entry.range
+                ? {
+                    start: { line: entry.range.start.line, character: entry.range.start.character },
+                    end: { line: entry.range.end.line, character: entry.range.end.character }
+                }
+                : null,
+            colorIdx: entry.colorIdx === undefined ? null : entry.colorIdx,
+            mode: entry.mode
+        };
+    }
+
+    /**
+     * SavedEntry -> HighlightEntry, tolerating hand-edited/corrupt JSON: anything that is
+     * not an object with a string `word` becomes an empty slot (keeps the color indexes).
+     * 
+     * Why fallback to MODE_ALL_MATCHES ? -> What ever will but if a weird word is saved then its likely not searchable
+     */
+    private static FromSavedEntry(value: unknown): HighlightEntry {
+        if (typeof value !== 'object' || value === null) {
+            return { word: '', range: undefined, colorIdx: undefined, mode: MODE_ALL_MATCHES };
+        }
+        const saved = value as { word?: unknown; range?: unknown; colorIdx?: unknown; mode?: unknown };
+        if (typeof saved.word !== 'string') {
+            return { word: '', range: undefined, colorIdx: undefined, mode: MODE_ALL_MATCHES };
+        }
+        return {
+            word: saved.word,
+            range: Highlight.RangeFromSaved(saved.range),
+            colorIdx: typeof saved.colorIdx === 'number' ? saved.colorIdx : undefined,
+            mode: saved.mode === MODE_ONLY_SELECTED_OCCURRENCE ? MODE_ONLY_SELECTED_OCCURRENCE : MODE_ALL_MATCHES
+        };
+    }
+
+    private static RangeFromSaved(value: unknown): vscode.Range | undefined {
+        if (typeof value !== 'object' || value === null) {
+            return undefined;
+        }
+        const saved = value as { start?: unknown; end?: unknown };
+        const start = saved.start as Partial<SavedPosition> | undefined;
+        const end = saved.end as Partial<SavedPosition> | undefined;
+        if (!start || !end ||
+            typeof start.line !== 'number' || typeof start.character !== 'number' ||
+            typeof end.line !== 'number' || typeof end.character !== 'number') {
+            return undefined;
+        }
+        return new vscode.Range(start.line, start.character, end.line, end.character);
+    }
+
+    /**
      * Toggle one (word, range) pick: add it when it is not highlighted yet,
      * empty its slot otherwise (see EmptyEntry for why slots are kept).
      */
     private EntryHandle(entries: HighlightEntry[], word: string, range: vscode.Range, colorIdx: number | undefined, mode: number): void {
         let idx: number;
         if (mode === MODE_ONLY_SELECTED_OCCURRENCE) {
+            const isOnlySelectedOccur = (e: HighlightEntry) => e.mode === MODE_ONLY_SELECTED_OCCURRENCE;
             // One highlight per cursor: entries are keyed by their original range
-            idx = this.FindEntryByRange(entries, range);
+            idx = this.FindEntryByRangeConditional(entries, range, [isOnlySelectedOccur]);
             if (idx === -1) {
                 this.UpdateEntry(entries, { word: word, range: range, colorIdx: colorIdx, mode: mode });
                 return;
             }
         } else {
             // find exist in words per entry
-            idx = entries.findIndex(entry => entry.word === word);
+            idx = entries.findIndex(entry => entry.word === word && entry.mode === MODE_ALL_MATCHES);
             if (idx === -1) {
                 this.UpdateEntry(entries, { word: word, range: range, colorIdx: colorIdx, mode: mode });
                 return;
@@ -206,14 +404,17 @@ export class Highlight {
     /**
      * Add the new entry, reusing a deleted slot when there is one, otherwise append.
      *
-     * - highlight-only-selected-occurrence mode: a slot is reusable when its range is
-     *   empty (undefined, or start === end), because the range is the identity here.
-     * - otherwise: a slot is reusable when its word was emptied ('').
+     * A slot is reusable depending on *its own* mode:
+     * - mode undefined: always reusable.
+     * - MODE_ONLY_SELECTED_OCCURRENCE: reusable when its range is empty (undefined, or
+     *   start === end), because the range is the identity here.
+     * - MODE_ALL_MATCHES: reusable when its word was emptied ('').
      */
     private UpdateEntry(entries: HighlightEntry[], entry: HighlightEntry): void {
-        const idx = entry.mode === MODE_ONLY_SELECTED_OCCURRENCE
-            ? entries.findIndex(e => e.range === undefined || e.range.start.isEqual(e.range.end))
-            : entries.findIndex(e => e.word === '');
+        const idx = entries.findIndex(e =>
+            e.mode === undefined
+            || (entry.mode === MODE_ONLY_SELECTED_OCCURRENCE && e.range === undefined)
+            || (entry.mode === MODE_ALL_MATCHES && e.word === ''));
         if (idx === -1) {
             entries.push(entry);
         } else {
@@ -224,6 +425,17 @@ export class Highlight {
     /** Index of the entry holding exactly this range (vscode.Range.isEqual compares both positions). */
     private FindEntryByRange(entries: HighlightEntry[], range: vscode.Range): number {
         return entries.findIndex(e => e.range !== undefined && e.range.isEqual(range));
+    }
+
+    /** Index of the entry holding exactly this range (vscode.Range.isEqual compares both positions).
+ *  Each predicate in `extras` is ANDed into the match. */
+    private FindEntryByRangeConditional(
+        entries: HighlightEntry[],
+        range: vscode.Range,
+        extras: ((e: HighlightEntry) => boolean)[] = [],
+    ): number {
+        return entries.findIndex(e =>
+            e.range !== undefined && e.range.isEqual(range) && extras.every(f => f(e)));
     }
 
     /**
@@ -379,8 +591,7 @@ export class Highlight {
      * Fill `decorations` for MODE_ALL_MATCHES entries: every occurrence of the word in the
      * document is decorated.
      * @param preferEntryColor true (DecorateSelectedWords_02): use the entry's picked color
-     *   when set, falling back to the entry index; false (DecorateSelectedWords): always the
-     *   entry index.
+     *   when set false falling back to the entry index
      */
     private DecorateAllMatches(
         editor: vscode.TextEditor,

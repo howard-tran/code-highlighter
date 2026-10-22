@@ -6,6 +6,8 @@
 	"command.showLog.title": "高亮：查看调试日志文件",
 	"command.toggleHighlight.title": "高亮：开关高亮功能",
 	"command.toggleOnlySelectedOccurrence.title": "高亮：切换只高亮选中处",
+	"command.saveHighlights.title": "高亮：将高亮单词保存到文件",
+	"command.loadHighlights.title": "高亮：从文件加载高亮单词",
 	"config.title": "高亮配置",
 	"config.wholeWord.description": "是否只高亮整个单词。",
 	"config.ignoreCase.description": "高亮时是否忽略大小写。",
