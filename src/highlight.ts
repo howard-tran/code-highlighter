@@ -137,10 +137,12 @@ export class Highlight {
 
         const entries = this.EntriesFor(editor.document);
         let colorIdx: number | undefined = undefined;
+
+        const isOnlySelectedOccur = (e: HighlightEntry) => e.mode === MODE_ONLY_SELECTED_OCCURRENCE;
         if (onlyOccurrence) {
             // Ask the user for a color index once per command trigger
             // Only fired when at least in selected range do not exist in the entry list
-            if (picks.some(p => this.FindEntryByRange(entries, p.range) === -1)) {
+            if (picks.some(p => this.FindEntryByRangeConditional(entries, p.range, [isOnlySelectedOccur]) === -1)) {
                 colorIdx = await this.PickColor();
             }
         } else {
@@ -562,7 +564,7 @@ export class Highlight {
             .filter(({ entry }) => entry.word !== '' && entry.mode === mode);
     }
 
-    /**
+    /** 
      * Fill `decorations` for MODE_ONLY_SELECTED_OCCURRENCE entries: the stored range *is*
      * the identity of the highlight, so it is drawn directly. ResolveRange only recovers it
      * when later edits shifted the positions (Not needed since we have UpdateRanges, but the

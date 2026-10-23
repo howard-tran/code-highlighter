@@ -55,10 +55,15 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 	context.subscriptions.push(disposable);
 
+	// time of the last highlight.saveHighlights write: the file watcher must not
+	// reload the file we just wrote ourselves
+	let lastOwnSaveAt = 0;
+
 	disposable = vscode.commands.registerCommand('highlight.saveHighlights', async () => {
 		log.Info('command: highlight.saveHighlights');
 		try {
 			await highlight.SaveHighlights();
+			lastOwnSaveAt = Date.now();
 		} catch (e) {
 			log.Exception('highlight.saveHighlights failed', e);
 			throw e;
@@ -134,6 +139,20 @@ export function activate(context: vscode.ExtensionContext) {
 			highlight.DecorateSelectedWords();
 		}
 	});
+
+	// react to external writes of `.vscode/highlight.json` (hand edits, git checkout,
+	// another window, sync tools) by reloading the saved highlights
+	const highlightsWatcher = vscode.workspace.createFileSystemWatcher('**/.vscode/highlight.json');
+	const reloadFromWatcher = (uri: vscode.Uri, event: string) => {
+		
+	};
+	// highlightsWatcher.onDidCreate(uri => reloadFromWatcher(uri, 'create'));
+	highlightsWatcher.onDidChange(uri => reloadFromWatcher(uri, 'change'));
+	// highlightsWatcher.onDidDelete(uri => {
+	// 	log.Info(`file watcher: delete ${uri.fsPath}`);
+	// });
+	context.subscriptions.push(highlightsWatcher);
+	
 }
 
 // this method is called when your extension is deactivated
