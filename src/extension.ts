@@ -143,11 +143,11 @@ export function activate(context: vscode.ExtensionContext) {
 	// react to external writes of `.vscode/highlight.json` (hand edits, git checkout,
 	// another window, sync tools) by reloading the saved highlights
 	const highlightsWatcher = vscode.workspace.createFileSystemWatcher('**/.vscode/highlight.json');
-	const reloadFromWatcher = (uri: vscode.Uri, event: string) => {
+	const reloadFromWatcher = (_uri: vscode.Uri, _event: string) => {
 		
 	};
 	// highlightsWatcher.onDidCreate(uri => reloadFromWatcher(uri, 'create'));
-	highlightsWatcher.onDidChange(uri => reloadFromWatcher(uri, 'change'));
+	// highlightsWatcher.onDidChange(uri => reloadFromWatcher(uri, 'change'));
 	// highlightsWatcher.onDidDelete(uri => {
 	// 	log.Info(`file watcher: delete ${uri.fsPath}`);
 	// });
