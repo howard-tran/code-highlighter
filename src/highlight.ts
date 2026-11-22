@@ -124,7 +124,13 @@ export class Highlight {
             if (trimmedWord === "" && onlyOccurrence) continue;
 
             if (onlyOccurrence) {
-                picks.push({ word, range: sel, mode: MODE_ONLY_SELECTED_OCCURRENCE });
+                const trimmedRange = this.trimRange(word, sel);
+                if (!trimmedRange) {
+                    continue;
+                }
+                // Range -> Selection: constructor takes (anchor, active), start/end works when direction doesn't matter
+                const sel2 = new vscode.Selection(trimmedRange.start, trimmedRange.end);
+                picks.push({ word: trimmedWord, range: sel2, mode: MODE_ONLY_SELECTED_OCCURRENCE });
             } else if (!seenWords.has(trimmedWord)) {
                 seenWords.add(trimmedWord);
                 picks.push({ word: trimmedWord, range: sel, mode: MODE_ALL_MATCHES });
@@ -206,6 +212,32 @@ export class Highlight {
             ? 'Highlight: now highlighting only the selected occurrence'
             : 'Highlight: now highlighting every match in the document');
         return onlyOccurrence;
+    }
+
+    /**
+     * Flip `highlight.configuration.renderStyle` between "highlight" (color behind the
+     * match) and "text" (color the text itself). Like ToggleSetting, the effective value
+     * comes from the most specific target that defines it (workspace folder > workspace >
+     * global) and the new value is written back to that same target. The change is picked
+     * up by onDidChangeConfiguration, which rebuilds the decorators and redraws.
+     * @returns the new render style.
+     */
+    public async ToggleRenderStyle(): Promise<string> {
+        const section = vscode.workspace.getConfiguration('highlight');
+        const inspect = section.inspect<string>('configuration.renderStyle');
+        const current = inspect?.workspaceFolderValue ?? inspect?.workspaceValue ??
+            inspect?.globalValue ?? inspect?.defaultValue ?? 'highlight';
+        const value = current === 'text' ? 'highlight' : 'text';
+        const target = inspect?.workspaceFolderValue !== undefined ? vscode.ConfigurationTarget.WorkspaceFolder
+            : inspect?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace
+                : vscode.ConfigurationTarget.Global;
+
+        log.Info(`ToggleRenderStyle: renderStyle: ${current} -> ${value} target=${vscode.ConfigurationTarget[target]}`);
+        await section.update('configuration.renderStyle', value, target);
+        vscode.window.showInformationMessage(value === 'text'
+            ? 'Highlight: render style is now "text" (colors the text itself)'
+            : 'Highlight: render style is now "highlight" (colors behind the match)');
+        return value;
     }
 
     /**
@@ -333,7 +365,7 @@ export class Highlight {
     /**
      * SavedEntry -> HighlightEntry, tolerating hand-edited/corrupt JSON: anything that is
      * not an object with a string `word` becomes an empty slot (keeps the color indexes).
-     * 
+     *
      * Why fallback to MODE_ALL_MATCHES ? -> What ever will but if a weird word is saved then its likely not searchable
      */
     private static FromSavedEntry(value: unknown): HighlightEntry {
@@ -415,8 +447,9 @@ export class Highlight {
     private UpdateEntry(entries: HighlightEntry[], entry: HighlightEntry): void {
         const idx = entries.findIndex(e =>
             e.mode === undefined
-            || (entry.mode === MODE_ONLY_SELECTED_OCCURRENCE && e.range === undefined)
-            || (entry.mode === MODE_ALL_MATCHES && e.word === ''));
+            || e.range == undefined
+            || e.word == ''
+            || e.colorIdx == undefined);
         if (idx === -1) {
             entries.push(entry);
         } else {
@@ -693,9 +726,15 @@ export class Highlight {
             this.DecorateAllMatches(editor, entries, decorations, text);
         }
 
+        // "text" mode draws no background that could cover the selection, so the
+        // exclusion split would only strip the color off the selected part of a
+        // highlighted word (and selection events no longer redraw in text mode,
+        // see onDidChangeTextEditorSelection, so that state would go stale).
+        const excludeSelection = selectionRedraw && this.config.GetRenderStyle() === 'highlight';
+
         this.decorators.forEach((decorator: vscode.TextEditorDecorationType, idx: number) => {
             // log.Info(`  decorator[${idx}]: ${decorations[idx].length} range(s)`);
-            if (selectionRedraw) {
+            if (excludeSelection) {
                 editor.setDecorations(decorator, this.ExcludeSelectionOffset(editor, decorations[idx]));
             } else {
                 editor.setDecorations(decorator, decorations[idx]);
@@ -709,6 +748,15 @@ export class Highlight {
         this.decorators.forEach(decorator => decorator.dispose());
         this.config = new Config();
         this.decorators = this.config.GetDecorationTypes();
+    }
+
+    /**
+     * How matches are drawn: `'text'` colors the text itself, `'highlight'`
+     * (default) paints a background color behind it
+     * (`highlight.configuration.renderStyle`).
+     */
+    public GetRenderStyle(): string {
+        return this.config.GetRenderStyle();
     }
 
     /**
@@ -861,7 +909,9 @@ export class Highlight {
 
         const items: vscode.QuickPickItem[] = colors.map((color: Color, i: number) => ({
             label: color.name ? `${color.name}` : `Color ${i + 1}`,
-            description: `${color.light} / ${color.dark}`
+            description: (color.textLight !== undefined || color.textDark !== undefined)
+                ? `${color.light} / ${color.dark} · text ${color.textLight ?? color.light} / ${color.textDark ?? color.dark}`
+                : `${color.light} / ${color.dark}`
         }));
         const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Pick a highlight color' });
         if (!picked) {
@@ -869,6 +919,30 @@ export class Highlight {
         }
         const idx = items.indexOf(picked);
         return idx >= 0 ? idx : undefined;
+    }
+
+    /**
+     * Shrink `range` so it excludes the leading/trailing spaces of `word`.
+     */
+    private trimRange(word: string | null | undefined, range: vscode.Range | null | undefined): vscode.Range | undefined {
+        if (!word || !range) {
+            return range ?? undefined;
+        }
+        const prefSpaces = word.match(/^ */)?.[0].length ?? 0;
+        const postSpaces = word.match(/ *$/)?.[0].length ?? 0;
+        const start = new vscode.Position(
+            range.start.line,
+            range.start.character + prefSpaces
+        );
+        const end = new vscode.Position(
+            range.end.line,
+            range.end.character - postSpaces
+        );
+        // all-spaces word would make the range inverted/empty; keep it empty instead
+        if (start.isAfter(end)) {
+            return new vscode.Range(start, start);
+        }
+        return range.with(start, end);
     }
 
     /**

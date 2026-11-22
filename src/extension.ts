@@ -55,6 +55,17 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 	context.subscriptions.push(disposable);
 
+	disposable = vscode.commands.registerCommand('highlight.toggleRenderStyle', async () => {
+		log.Info('command: highlight.toggleRenderStyle');
+		try {
+			await highlight.ToggleRenderStyle();
+		} catch (e) {
+			log.Exception('highlight.toggleRenderStyle failed', e);
+			throw e;
+		}
+	});
+	context.subscriptions.push(disposable);
+
 	// time of the last highlight.saveHighlights write: the file watcher must not
 	// reload the file we just wrote ourselves
 	let lastOwnSaveAt = 0;
@@ -128,7 +139,13 @@ export function activate(context: vscode.ExtensionContext) {
 
 	vscode.window.onDidChangeTextEditorSelection(_ => {
 		// e.textEditor, e.selections, e.kind
-		highlight.RefreshSelectedWords(true);
+		// Only background highlights need this redraw: it splits the highlight around
+		// the selection so it does not cover VS Code's selection color. In "text" mode
+		// there is no background, so the colored text is left untouched (and every
+		// caret move does not trigger a full re-decoration).
+		if (highlight.GetRenderStyle() === 'highlight') {
+			highlight.RefreshSelectedWords(true);
+		}
 		// updateDecorations(e.textEditor); // re-apply highlight so it skips selected ranges
 	});
 
@@ -138,6 +155,33 @@ export function activate(context: vscode.ExtensionContext) {
 			highlight.UpdateConfig();
 			highlight.DecorateSelectedWords();
 		}
+	});
+
+	// light themes paint the background behind the match, dark themes color the text
+	// itself, so the render style follows the active theme. The write goes back to the
+	// target that already defines the setting (workspace folder > workspace > global),
+	// otherwise it would be shadowed; the config-change handler above then rebuilds the
+	// decorators and redraws, the refresh below covers the "already set" case.
+	vscode.window.onDidChangeActiveColorTheme(async theme => {
+		const style = theme.kind === vscode.ColorThemeKind.Light ? 'highlight' : 'text';
+		log.Info(`color theme changed: kind=${theme.kind} -> renderStyle=${style}`);
+
+		const section = vscode.workspace.getConfiguration('highlight');
+		const inspect = section.inspect<string>('configuration.renderStyle');
+		const current = inspect?.workspaceFolderValue ?? inspect?.workspaceValue ??
+			inspect?.globalValue ?? inspect?.defaultValue;
+		if (current !== style) {
+			const target = inspect?.workspaceFolderValue !== undefined ? vscode.ConfigurationTarget.WorkspaceFolder
+				: inspect?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace
+					: vscode.ConfigurationTarget.Global;
+			log.Info(`renderStyle: ${current} -> ${style} target=${vscode.ConfigurationTarget[target]}`);
+			try {
+				await section.update('configuration.renderStyle', style, target);
+			} catch (e) {
+				log.Exception('failed to update highlight.configuration.renderStyle', e);
+			}
+		}
+		highlight.RefreshSelectedWords(false);
 	});
 
 	// react to external writes of `.vscode/highlight.json` (hand edits, git checkout,

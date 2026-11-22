@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Color Modes</title>
+<style>
+  :root {
+    --page-bg: #f4f5f7;
+    --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.05);
+  }
+
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-weight: 700;
+    margin: 0;
+    padding: 32px 24px;
+    background: var(--page-bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+  }
+
+  main {
+    width: 100%;
+    max-width: 760px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .box {
+    padding: 20px 24px;
+    border-radius: 10px;
+    box-shadow: var(--card-shadow);
+  }
+
+  .box h2 {
+    margin: 0 0 12px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    opacity: 0.65;
+  }
+
+  .box .text {
+    margin: 0;
+    line-height: 2.1;
+    font-size: 17px;
+    font-weight: 700;
+  }
+
+  /* each word is wrapped in its own div; inline-block keeps the text flowing */
+  .box .text > div.word {
+    display: inline-block;
+    margin-right: 0.3em;
+  }
+
+  /* highlighted words: padding + rounded corners like the extension's decoration */
+  .box .text > div.word.hl {
+    padding: 2px 7px;
+    border-radius: 4px;
+  }
+
+  /* 1st div: light mode, light colored text */
+  .light-mode {
+    background: #ffffff;
+    border: 1px solid #e6e6e6;
+    color: #9e9e9e;
+  }
+
+  /* 2nd div: dark mode, dark colored text */
+  .dark-mode {
+    background: #1e1e1e;
+    border: 1px solid #333333;
+    color: #565656;
+  }
+
+  /* 3rd div: light mode, light highlight text */
+  .light-highlight {
+    background: #ffffff;
+    border: 1px solid #e6e6e6;
+    color: #333333;
+  }
+
+  /* 4th div: dark mode, dark highlight text */
+  .dark-highlight {
+    background: #1e1e1e;
+    border: 1px solid #333333;
+    color: #d4d4d4;
+  }
+
+  .light-mode h2, .light-highlight h2 { color: #555555; }
+  .dark-mode h2, .dark-highlight h2 { color: #aaaaaa; }
+</style>
+</head>
+<body>
+<main>
+  <div class="box light-mode">
+    <h2>1 · Light mode — colored text (config light)</h2>
+    <div id="p1" class="text"></div>
+  </div>
+  <div class="box dark-mode">
+    <h2>2 · Dark mode — colored text (config dark)</h2>
+    <div id="p2" class="text"></div>
+  </div>
+  <div class="box light-highlight">
+    <h2>3 · Light mode — highlight (bg = textLight ?? light, black text)</h2>
+    <div id="p3" class="text"></div>
+  </div>
+  <div class="box dark-highlight">
+    <h2>4 · Dark mode — highlight (bg = textDark ?? dark, white text)</h2>
+    <div id="p4" class="text"></div>
+  </div>
+</main>
+
+<script>
+// Colors from highlight.configuration.colors (package.json), with literal
+// textLight / textDark values.
+// - light (div 1, light-mode text): darkened across all variants so bold text
+//   reads on white; -2 stays bolder/deeper than -1.
+// - textLight: unchanged pastel values (div 3 light highlight background).
+// - dark: unchanged (div 2 dark-mode text).
+// - textDark: mirrors dark, except lime-1/yellow-1/lime-2/yellow-2, which are
+//   darkened for readability under white text (div 4 dark highlight).
+// The ?? fallback in highlightColorFor still mirrors src/config.ts.
+const COLORS = [
+  { name: "red-1", light: "#E53935", dark: "#E57373", textLight: "#FFCDD2", textDark: "#E57373" },
+  { name: "pink-1", light: "#D81B60", dark: "#F48FB1", textLight: "#FCE4EC", textDark: "#F48FB1" },
+  { name: "purple-1", light: "#8E24AA", dark: "#BA68C8", textLight: "#E1BEE7", textDark: "#BA68C8" },
+  { name: "deepPurple-1", light: "#5E35B1", dark: "#9575CD", textLight: "#D1C4E9", textDark: "#9575CD" },
+  { name: "indigo-1", light: "#3949AB", dark: "#7986CB", textLight: "#C5CAE9", textDark: "#7986CB" },
+  { name: "blue-1", light: "#1E88E5", dark: "#64B5F6", textLight: "#BBDEFB", textDark: "#64B5F6" },
+  { name: "lightBlue-1", light: "#039BE5", dark: "#4FC3F7", textLight: "#B3E5FC", textDark: "#4FC3F7" },
+  { name: "cyan-1", light: "#0097A7", dark: "#4DD0E1", textLight: "#B2EBF2", textDark: "#4DD0E1" },
+  { name: "teal-1", light: "#00897B", dark: "#4DB6AC", textLight: "#B2DFDB", textDark: "#4DB6AC" },
+  { name: "green-1", light: "#43A047", dark: "#81C784", textLight: "#C8E6C9", textDark: "#81C784" },
+  { name: "lightGreen-1", light: "#558B2F", dark: "#AED581", textLight: "#DCEDC8", textDark: "#AED581" },
+  { name: "lime-1", light: "#827717", dark: "#DCE775", textLight: "#F0F4C3", textDark: "#9E9D24" },
+  { name: "yellow-1", light: "#8A6D00", dark: "#FFF176", textLight: "#FFF9C4", textDark: "#F9A825" },
+  { name: "amber-1", light: "#B26500", dark: "#FFD54F", textLight: "#FFECB3", textDark: "#FFD54F" },
+  { name: "orange-1", light: "#CC5A00", dark: "#FFB74D", textLight: "#FFE0B2", textDark: "#FFB74D" },
+  { name: "deepOrange-1", light: "#E64A19", dark: "#FF8A65", textLight: "#FFCCBC", textDark: "#FF8A65" },
+  { name: "brown-1", light: "#6D4C41", dark: "#A1887F", textLight: "#D7CCC8", textDark: "#A1887F" },
+  { name: "blueGrey-1", light: "#546E7A", dark: "#90A4AE", textLight: "#CFD8DC", textDark: "#90A4AE" },
+  { name: "red-2", light: "#C62828", dark: "#EF5350", textLight: "#EF9A9A", textDark: "#EF5350" },
+  { name: "pink-2", light: "#AD1457", dark: "#EC407A", textLight: "#F8BBD0", textDark: "#EC407A" },
+  { name: "purple-2", light: "#6A1B9A", dark: "#AB47BC", textLight: "#CE93D8", textDark: "#AB47BC" },
+  { name: "deepPurple-2", light: "#4527A0", dark: "#7E57C2", textLight: "#B39DDB", textDark: "#7E57C2" },
+  { name: "indigo-2", light: "#283593", dark: "#5C6BC0", textLight: "#9FA8DA", textDark: "#5C6BC0" },
+  { name: "blue-2", light: "#1565C0", dark: "#42A5F5", textLight: "#90CAF9", textDark: "#42A5F5" },
+  { name: "lightBlue-2", light: "#0277BD", dark: "#29B6F6", textLight: "#81D4FA", textDark: "#29B6F6" },
+  { name: "cyan-2", light: "#00838F", dark: "#26C6DA", textLight: "#80DEEA", textDark: "#26C6DA" },
+  { name: "teal-2", light: "#00695C", dark: "#26A69A", textLight: "#80CBC4", textDark: "#26A69A" },
+  { name: "green-2", light: "#2E7D32", dark: "#66BB6A", textLight: "#A5D6A7", textDark: "#66BB6A" },
+  { name: "lightGreen-2", light: "#33691E", dark: "#9CCC65", textLight: "#C5E1A5", textDark: "#9CCC65" },
+  { name: "lime-2", light: "#556B00", dark: "#D4E157", textLight: "#E6EE9C", textDark: "#827717" },
+  { name: "yellow-2", light: "#6B5200", dark: "#FFEE58", textLight: "#FFF59D", textDark: "#F57F17" },
+  { name: "amber-2", light: "#7F4A00", dark: "#FFCA28", textLight: "#FFE082", textDark: "#FFCA28" },
+  { name: "orange-2", light: "#994000", dark: "#FFA726", textLight: "#FFCC80", textDark: "#FFA726" },
+  { name: "deepOrange-2", light: "#A83200", dark: "#FF7043", textLight: "#FFAB91", textDark: "#FF7043" },
+  { name: "brown-2", light: "#4E342E", dark: "#8D6E63", textLight: "#BCAAA4", textDark: "#8D6E63" },
+  { name: "blueGrey-2", light: "#37474F", dark: "#78909C", textLight: "#B0BEC5", textDark: "#78909C" }
+];
+
+const SENTENCE = "Each word in this paragraph takes its color from the highlight configuration colors array in package.json one entry at a time cycling through every configured light and dark shade including the literal text highlight values used by render style text mode";
+
+// Highlight color: literal textLight/textDark when present, else light/dark.
+function highlightColorFor(entry, mode) {
+  return mode === "light"
+    ? (entry.textLight ?? entry.light)
+    : (entry.textDark ?? entry.dark);
+}
+
+function renderParagraph(id, mode, isHighlight) {
+  const p = document.getElementById(id);
+  const words = SENTENCE.split(" ");
+  words.forEach((word, i) => {
+    const entry = COLORS[i % COLORS.length];
+    const wordDiv = document.createElement("div");
+    wordDiv.className = "word";
+    wordDiv.textContent = word;
+    if (isHighlight) {
+      // highlight mode: config color is the background, text stays readable
+      wordDiv.style.backgroundColor = highlightColorFor(entry, mode);
+      wordDiv.style.color = mode === "light" ? "#000000" : "#ffffff";
+      wordDiv.classList.add("hl");
+    } else {
+      // plain mode: config color tints the text itself
+      wordDiv.style.color = mode === "light" ? entry.light : entry.dark;
+    }
+    wordDiv.title = entry.name;
+    p.appendChild(wordDiv);
+  });
+}
+
+renderParagraph("p1", "light", false);
+renderParagraph("p2", "dark", false);
+renderParagraph("p3", "light", true);
+renderParagraph("p4", "dark", true);
+</script>
+</body>
+</html>

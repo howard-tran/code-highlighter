@@ -10,6 +10,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 -   **Command**: Added `highlight.toggleOnlySelectedOccurrence` to switch `highlight.configuration.onlySelectedOccurrence` between "every match" and "only the selected occurrence".
 -   **Command**: Added `highlight.saveHighlights` / `highlight.loadHighlights` to persist the highlighted words (per file, mode, color, occurrence ranges) to `.vscode/highlight.words.json` and reload them.
 -   **Configuration**: Added `highlight.configuration.disableHighlight` (boolean, default `false`), flipped by the toggle command.
+-   **Configuration**: Added `highlight.configuration.renderStyle` (`"highlight"` | `"text"`, default `"highlight"`): color the text itself instead of painting a background highlight.
 
 ## [1.0.0] - 2025-09-27 (Forked)
 
