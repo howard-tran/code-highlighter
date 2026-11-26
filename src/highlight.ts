@@ -34,6 +34,17 @@ interface IndexedEntry {
     idx: number;
 }
 
+/**
+ * One decoration taken out of a DecorationOptions[][]: the option itself, the color
+ * bucket it came from (index in the outer array), and an id unique within the flatten
+ * (used as the intersection-memo key).
+ */
+interface FlatDecoration {
+    id: string;
+    option: vscode.DecorationOptions;
+    color: number;
+}
+
 /** File name under `.vscode/` where the highlighted words are persisted. */
 const HIGHLIGHTS_FILE = 'highlight.json';
 /** Format version written by SaveHighlights. */
@@ -407,8 +418,20 @@ export class Highlight {
         let idx: number;
         if (mode === MODE_ONLY_SELECTED_OCCURRENCE) {
             const isOnlySelectedOccur = (e: HighlightEntry) => e.mode === MODE_ONLY_SELECTED_OCCURRENCE;
-            // One highlight per cursor: entries are keyed by their original range
+            const isIntersected = (e: HighlightEntry) => {
+                const intersect = e.range?.intersection(range);
+                if (intersect) return true;
+                return false;
+            };
             idx = this.FindEntryByRangeConditional(entries, range, [isOnlySelectedOccur]);
+            const idx2 = this.FindEntryByRangeConditional(entries, undefined, [isOnlySelectedOccur, isIntersected]);
+
+            if (idx2 !== -1) {
+                log.Info("Intersted!")
+                this.UpdateEntry(entries, { word: word, range: range, colorIdx: colorIdx, mode: mode }, idx2);
+                return;
+            }
+            // One highlight per cursor: entries are keyed by their original range
             if (idx === -1) {
                 this.UpdateEntry(entries, { word: word, range: range, colorIdx: colorIdx, mode: mode });
                 return;
@@ -444,12 +467,14 @@ export class Highlight {
      *   start === end), because the range is the identity here.
      * - MODE_ALL_MATCHES: reusable when its word was emptied ('').
      */
-    private UpdateEntry(entries: HighlightEntry[], entry: HighlightEntry): void {
-        const idx = entries.findIndex(e =>
-            e.mode === undefined
-            || e.range == undefined
-            || e.word == ''
-            || e.colorIdx == undefined);
+    private UpdateEntry(entries: HighlightEntry[], entry: HighlightEntry, idx : number | undefined = undefined): void {
+        if (idx === undefined) {
+            idx = entries.findIndex(e =>
+                e.mode === undefined
+                || e.range == undefined
+                || e.word == ''
+                || e.colorIdx == undefined);
+        }
         if (idx === -1) {
             entries.push(entry);
         } else {
@@ -466,11 +491,14 @@ export class Highlight {
  *  Each predicate in `extras` is ANDed into the match. */
     private FindEntryByRangeConditional(
         entries: HighlightEntry[],
-        range: vscode.Range,
+        range: vscode.Range | undefined,
         extras: ((e: HighlightEntry) => boolean)[] = [],
     ): number {
-        return entries.findIndex(e =>
-            e.range !== undefined && e.range.isEqual(range) && extras.every(f => f(e)));
+        if (range !== undefined)
+            return entries.findIndex(e =>
+                e.range !== undefined && e.range.isEqual(range) && extras.every(f => f(e)));
+        else return entries.findIndex(e =>
+            e.range !== undefined && extras.every(f => f(e)));
     }
 
     /**
@@ -668,29 +696,174 @@ export class Highlight {
             return;
         }
 
-        let decorations: vscode.DecorationOptions[][] = [];
+        let rootDecorations: vscode.DecorationOptions[][] = [];
         this.decorators.forEach(() => {
             let decoration: vscode.DecorationOptions[] = [];
-            decorations.push(decoration);
+            rootDecorations.push(decoration);
         });
 
         const text = editor.document.getText();
         const entries = this.DecorableEntries(editor.document);
         if (this.config.IsOnlySelectedOccurrence()) {
-            this.DecorateOnlySelectedOccurrences(editor, entries, decorations, text);
+            this.DecorateOnlySelectedOccurrences(editor, entries, rootDecorations, text);
         } else {
             // _02 prefers the color picked by the user over the entry index
-            this.DecorateAllMatches(editor, entries, decorations, text, true);
+            this.DecorateAllMatches(editor, entries, rootDecorations, text, true);
         }
 
+        let latestIdx = 0;
+        let decorationLayer: vscode.DecorationOptions[][][] = [];
+        decorationLayer.push(rootDecorations);
+        latestIdx = decorationLayer.length - 1;
+
+        { // layer 01
+            // compute intersection: every decoration is cut by all decorations it
+            // intersects, so no two colors ever draw over the same characters.
+            const document = editor.document;
+
+            // :vscode.DecorationOptions[][] — input is the previous layer
+            const decorations = decorationLayer[latestIdx];
+            const decor = this.flatten(decorations);
+
+            const isIntersected = (a: vscode.Range, b: vscode.Range): boolean => {
+                // vscode.Range has no intersect(); IsIntersect is this file's overlap test
+                const overlap = this.IsIntersect(a, b);
+                if (overlap) {
+                    return true;
+                }
+                return false;
+            };
+
+            // :vscode.DecorationOptions[][] — one bucket per color, same layout as `decorations`
+            const resultDecoration: vscode.DecorationOptions[][] = [];
+            decorations.forEach(() => {
+                resultDecoration.push([]);
+            });
+
+            // checkIntersected[id1][id2] === true: this pair is already known to intersect
+            const checkIntersected: { [id1: string]: { [id2: string]: boolean } } = {};
+
+            for (let i = 0; i < decor.length; i++) {
+                // rangeList: this decoration first, then every other one it intersects
+                const groupIntersect: vscode.Range[] = [decor[i].option.range];
+                for (let j = 0; j < decor.length; j++) {
+                    const id1 = decor[i].id;
+                    const id2 = decor[j].id;
+                    const rangeA = decor[i].option.range;
+                    const rangeB = decor[j].option.range;
+
+                    if (id1 === id2) continue;
+
+                    if (checkIntersected[id1][id2] && isIntersected(rangeA, rangeB)) {
+                        groupIntersect.push(rangeB);
+                        checkIntersected[id1][id2] = true;
+                    }
+                }
+
+                this.cutIntersected(document, groupIntersect).forEach((item) => {
+                    resultDecoration[decor[i].color].push({
+                        ...decor[i].option,
+                        range: new vscode.Range(item.start, item.end)
+                    });
+                });
+            }
+
+            decorationLayer.push(resultDecoration);
+            latestIdx = decorationLayer.length - 1;
+        }
+
+
+        { // layer 02
+            decorationLayer.push(
+                Array.from({ length: this.decorators.length }, () => [])
+            );
+            latestIdx = decorationLayer.length - 1;
+            // compute selection
+            if (selectionRedraw) {
+                for (let i = 0; i < decorationLayer[latestIdx].length; i++) {
+                    decorationLayer[latestIdx][i] = this.ExcludeSelectionOffset(editor, decorationLayer[latestIdx][i]);
+                }
+            } else {
+                decorationLayer[latestIdx] = decorationLayer[latestIdx - 1];
+            }
+        }
+
+        const renderDecorations = decorationLayer[latestIdx];
         this.decorators.forEach((decorator: vscode.TextEditorDecorationType, idx: number) => {
             // log.Info(`  decorator[${idx}]: ${decorations[idx].length} range(s)`);
             if (selectionRedraw) {
-                editor.setDecorations(decorator, this.ExcludeSelectionOffset(editor, decorations[idx]));
+                editor.setDecorations(decorator, this.ExcludeSelectionOffset(editor, renderDecorations[idx]));
             } else {
-                editor.setDecorations(decorator, decorations[idx]);
+                editor.setDecorations(decorator, renderDecorations[idx]);
             }
         });
+    }
+
+    /**
+     * Layer 01 helper (pseudo cutIntersected): keep the parts of `rangeList[0]` that none
+     * of the other ranges cover, as interval subtraction on document offsets (the same
+     * cut loop ExcludeSelectionOffset does against selections, here against decorations).
+     */
+    private cutIntersected(document: vscode.TextDocument, rangeList: vscode.Range[]): vscode.Range[] {
+        if (rangeList.length < 2) {
+            // nothing to cut it by: keep the range whole (pseudo returned [], which would
+            // delete every non-overlapping highlight from the layer)
+            return rangeList.slice();
+        }
+
+        const decor_1 = rangeList[0];
+        const decorList = rangeList.slice(1)
+            .filter(e => !e.isEmpty)
+            .map(e => [document.offsetAt(e.start), document.offsetAt(e.end)] as [number, number]);
+
+        if (decorList.length === 0) {
+            return [decor_1]; // every other range is empty: nothing to cut
+        }
+
+        const res: vscode.Range[] = [];
+
+        const start = document.offsetAt(decor_1.start);
+        const end = document.offsetAt(decor_1.end);
+
+        const cuts = decorList
+            // clip to [start, end]: Math.min on the end side (pseudo wrote Math.max)
+            .map(([dStart, dEnd]): [number, number] => [Math.max(start, dStart), Math.min(end, dEnd)])
+            .filter(([dStart, dEnd]) => dStart < dEnd)
+            .sort((a, b) => a[0] - b[0]);
+
+        let cursor = start;
+        for (const [dStart, dEnd] of cuts) {
+            const newRange = new vscode.Range(
+                document.positionAt(cursor),
+                document.positionAt(dStart) // kept piece ends where the cut starts (pseudo wrote positionAt(start))
+            );
+            if (!newRange.isEmpty) {
+                res.push(newRange);
+            }
+            cursor = Math.max(cursor, dEnd); // pseudo wrote cut.end
+        }
+        if (cursor < end) { // pseudo typo: cusor
+            res.push(new vscode.Range(
+                document.positionAt(cursor),
+                document.positionAt(end)
+            ));
+        }
+        return res; // vscode.Range[]
+    }
+
+    /**
+     * DecorationOptions[][] -> flat list: each option tagged with an id unique within the
+     * flatten (the intersection-memo key) and its color (index in the outer array).
+     */
+    private flatten(decorations: vscode.DecorationOptions[][]): FlatDecoration[] {
+        const flat: FlatDecoration[] = [];
+        let uid = 0; // rand_unique(): unique within one flatten call, which is all the memo needs
+        decorations.forEach((options, color) => {
+            options.forEach(option => {
+                flat.push({ id: `d${uid++}`, option: option, color: color });
+            });
+        });
+        return flat;
     }
 
     /**
@@ -708,10 +881,10 @@ export class Highlight {
             return;
         }
 
-        let decorations: vscode.DecorationOptions[][] = [];
+        let rootDecorations: vscode.DecorationOptions[][] = [];
         this.decorators.forEach(() => {
             let decoration: vscode.DecorationOptions[] = [];
-            decorations.push(decoration);
+            rootDecorations.push(decoration);
         });
 
         const text = editor.document.getText();
@@ -721,24 +894,113 @@ export class Highlight {
         //     `wholeWord=${this.config.IsWholeWord()} ignoreCase=${this.config.IsIgnoreCase()} ` +
         //     `onlyOccurrence=${this.config.IsOnlySelectedOccurrence()} decorators=${this.decorators.length}`);
         if (this.config.IsOnlySelectedOccurrence()) {
-            this.DecorateOnlySelectedOccurrences(editor, entries, decorations, text);
+            this.DecorateOnlySelectedOccurrences(editor, entries, rootDecorations, text);
         } else {
-            this.DecorateAllMatches(editor, entries, decorations, text);
+            this.DecorateAllMatches(editor, entries, rootDecorations, text);
         }
 
-        // "text" mode draws no background that could cover the selection, so the
-        // exclusion split would only strip the color off the selected part of a
-        // highlighted word (and selection events no longer redraw in text mode,
-        // see onDidChangeTextEditorSelection, so that state would go stale).
-        const excludeSelection = selectionRedraw && this.config.GetRenderStyle() === 'highlight';
+        let latestIdx = 0;
+        let decorationLayer: vscode.DecorationOptions[][][] = [];
+        decorationLayer.push(rootDecorations);
+        latestIdx = decorationLayer.length - 1;
 
+        { // layer 01
+            // // compute intersection: every decoration is cut by all decorations it
+            // // intersects, so no two colors ever draw over the same characters.
+            // const document = editor.document;
+            //
+            // // :vscode.DecorationOptions[][] — input is the previous layer
+            // const decorations = decorationLayer[latestIdx];
+            // const decor = this.flatten(decorations);
+            //
+            // const isIntersected = (a: vscode.Range, b: vscode.Range): boolean => {
+            //     // vscode.Range has no intersect(); IsIntersect is this file's overlap test
+            //     const overlap = this.IsIntersect(a, b);
+            //     if (overlap) {
+            //         return true;
+            //     }
+            //     return false;
+            // };
+            //
+            // // :vscode.DecorationOptions[][] — one bucket per color, same layout as `decorations`
+            // const resultDecoration: vscode.DecorationOptions[][] = [];
+            // decorations.forEach(() => {
+            //     resultDecoration.push([]);
+            // });
+            //
+            // // checkIntersected[id1][id2] === true: this pair is already known to intersect
+            // const checkIntersected: { [id1: string]: { [id2: string]: boolean } } = {};
+            //
+            // for (let i = 0; i < decor.length; i++) {
+            //     // rangeList: this decoration first, then every other one it intersects
+            //     const groupIntersect: vscode.Range[] = [decor[i].option.range];
+            //     for (let j = 0; j < decor.length; j++) {
+            //         const id1 = decor[i].id;
+            //         const id2 = decor[j].id;
+            //         const rangeA = decor[i].option.range;
+            //         const rangeB = decor[j].option.range;
+            //
+            //         if (id1 === id2) continue;
+            //
+            //         // the memo only skips the re-check; a known pair still joins the group
+            //         // (the pseudo's `!checkIntersected[id1][id2] && ...` would also skip the
+            //         // push, leaving one side of every pair uncut)
+            //         if (checkIntersected[id1][id2] && isIntersected(rangeA, rangeB)) {
+            //             groupIntersect.push(rangeB);
+            //             checkIntersected[id1][id2] = true;
+            //         }
+            //     }
+            //
+            //     this.cutIntersected(document, groupIntersect).forEach((item) => {
+            //         resultDecoration[decor[i].color].push({
+            //             ...decor[i].option,
+            //             range: new vscode.Range(item.start, item.end)
+            //         });
+            //     });
+            // }
+            //
+            // decorationLayer.push(resultDecoration);
+            // latestIdx = decorationLayer.length - 1;
+        }
+
+        { // layer 02
+            // compute selection: split the previous layer's ranges around the current
+            // selections (the fresh buckets were wrong here: excluding from an empty
+            // layer drew nothing when selectionRedraw was true), or pass them through
+            const prevLayer = decorationLayer[latestIdx];
+            decorationLayer.push(
+                selectionRedraw
+                    ? prevLayer.map(bucket => this.ExcludeSelectionOffset(editor, bucket))
+                    : prevLayer
+            );
+            latestIdx = decorationLayer.length - 1;
+        }
+        // this.renderByOrder(decorationLayer[latestIdx], editor);
+        this.renderByColorMap(decorationLayer[latestIdx], editor);
+    }
+
+    public renderByColorMap(decorations: vscode.DecorationOptions[][], editor: vscode.TextEditor) {
         this.decorators.forEach((decorator: vscode.TextEditorDecorationType, idx: number) => {
             // log.Info(`  decorator[${idx}]: ${decorations[idx].length} range(s)`);
-            if (excludeSelection) {
-                editor.setDecorations(decorator, this.ExcludeSelectionOffset(editor, decorations[idx]));
-            } else {
-                editor.setDecorations(decorator, decorations[idx]);
-            }
+            editor.setDecorations(decorator, decorations[idx]);
+        });
+    }
+
+    public renderByOrder(decorations: vscode.DecorationOptions[][], editor: vscode.TextEditor) {
+        const renderDecorations = this.flatten(decorations);
+        // setDecorations replaces a type's whole range list, so grouping the sorted
+        // options back by color and setting each decorator once is required — setting
+        // one option per call left only the last range of each color on screen.
+        // Descending document order via Position.compareTo (Range values are objects,
+        // so `b.range - a.range` was NaN and sorted nothing).
+        const byColor: vscode.DecorationOptions[][] = this.decorators.map(() => []);
+        renderDecorations
+            .sort((a, b) => b.option.range.start.compareTo(a.option.range.start))
+            .forEach((flatOption) => {
+                byColor[flatOption.color].push(flatOption.option);
+            });
+        byColor.forEach((options, colorIdx) => {
+            editor.setDecorations(this.decorators[colorIdx], options);
         });
     }
 
@@ -882,7 +1144,8 @@ export class Highlight {
         return result;
     }
 
-    private IsIntersect(range1: vscode.Range, range2: vscode.Range): boolean {
+    public IsIntersect(range1: vscode.Range | undefined, range2: vscode.Range | undefined): boolean {
+        if (range1 === undefined || range2 === undefined) return false;
         return range1.start.isBeforeOrEqual(range2.end) && range2.start.isBeforeOrEqual(range1.end);
     }
 

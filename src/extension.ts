@@ -145,6 +145,8 @@ export function activate(context: vscode.ExtensionContext) {
 		// caret move does not trigger a full re-decoration).
 		if (highlight.GetRenderStyle() === 'highlight') {
 			highlight.RefreshSelectedWords(true);
+		} else {
+			highlight.RefreshSelectedWords(false);
 		}
 		// updateDecorations(e.textEditor); // re-apply highlight so it skips selected ranges
 	});
@@ -162,27 +164,27 @@ export function activate(context: vscode.ExtensionContext) {
 	// target that already defines the setting (workspace folder > workspace > global),
 	// otherwise it would be shadowed; the config-change handler above then rebuilds the
 	// decorators and redraws, the refresh below covers the "already set" case.
-	vscode.window.onDidChangeActiveColorTheme(async theme => {
-		const style = theme.kind === vscode.ColorThemeKind.Light ? 'highlight' : 'text';
-		log.Info(`color theme changed: kind=${theme.kind} -> renderStyle=${style}`);
-
-		const section = vscode.workspace.getConfiguration('highlight');
-		const inspect = section.inspect<string>('configuration.renderStyle');
-		const current = inspect?.workspaceFolderValue ?? inspect?.workspaceValue ??
-			inspect?.globalValue ?? inspect?.defaultValue;
-		if (current !== style) {
-			const target = inspect?.workspaceFolderValue !== undefined ? vscode.ConfigurationTarget.WorkspaceFolder
-				: inspect?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace
-					: vscode.ConfigurationTarget.Global;
-			log.Info(`renderStyle: ${current} -> ${style} target=${vscode.ConfigurationTarget[target]}`);
-			try {
-				await section.update('configuration.renderStyle', style, target);
-			} catch (e) {
-				log.Exception('failed to update highlight.configuration.renderStyle', e);
-			}
-		}
-		highlight.RefreshSelectedWords(false);
-	});
+	// vscode.window.onDidChangeActiveColorTheme(async theme => {
+	// 	const style = theme.kind === vscode.ColorThemeKind.Light ? 'highlight' : 'text';
+	// 	log.Info(`color theme changed: kind=${theme.kind} -> renderStyle=${style}`);
+	//
+	// 	const section = vscode.workspace.getConfiguration('highlight');
+	// 	const inspect = section.inspect<string>('configuration.renderStyle');
+	// 	const current = inspect?.workspaceFolderValue ?? inspect?.workspaceValue ??
+	// 		inspect?.globalValue ?? inspect?.defaultValue;
+	// 	if (current !== style) {
+	// 		const target = inspect?.workspaceFolderValue !== undefined ? vscode.ConfigurationTarget.WorkspaceFolder
+	// 			: inspect?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace
+	// 				: vscode.ConfigurationTarget.Global;
+	// 		log.Info(`renderStyle: ${current} -> ${style} target=${vscode.ConfigurationTarget[target]}`);
+	// 		try {
+	// 			await section.update('configuration.renderStyle', style, target);
+	// 		} catch (e) {
+	// 			log.Exception('failed to update highlight.configuration.renderStyle', e);
+	// 		}
+	// 	}
+	// 	highlight.RefreshSelectedWords(false);
+	// });
 
 	// react to external writes of `.vscode/highlight.json` (hand edits, git checkout,
 	// another window, sync tools) by reloading the saved highlights
